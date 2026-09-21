@@ -9,6 +9,7 @@ set -e
 
 export DEBIAN_FRONTEND=noninteractive
 echo "==> Host arch: $(uname -m)"
+echo "==> FPC version: $(fpc -iV 2>/dev/null || echo 'not found')"
 
 # ------------------------------------------------------------
 # 1. Multiarch + apt-Quellen
@@ -52,28 +53,23 @@ which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
 
 # ------------------------------------------------------------
-# 3. Free Pascal 3.2.2 (nativ + Cross-Compiler aarch64)
+# 3. FPC-Cross-Compiler fuer aarch64 einrichten
+#    (FPC selbst ist bereits im Docker-Image installiert!)
 # ------------------------------------------------------------
-echo "==> Installing FPC 3.2.2 (native + aarch64 cross)"
+echo "==> Setting up FPC cross-compiler for aarch64"
 
 FPC_VERSION="3.2.2"
-FPC_NATIVE_URL="https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/x86_64-linux/fpc-${FPC_VERSION}-x86_64-linux.tar"
-wget -q "${FPC_NATIVE_URL}" -O /tmp/fpc-native.tar
-mkdir -p /opt/fpc-native
-tar -xf /tmp/fpc-native.tar -C /opt/fpc-native
-cd /opt/fpc-native
-echo "y" | ./install.sh --no-checks
-cd /
-
 FPC_CROSS_URL="https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/x86_64-linux/fpc-${FPC_VERSION}-aarch64-linux.cross.x86_64-linux.tar"
 wget -q "${FPC_CROSS_URL}" -O /tmp/fpc-cross.tar
 mkdir -p /opt/fpc-cross
 tar -xf /tmp/fpc-cross.tar -C /opt/fpc-cross
 
+# Cross-Compiler verlinken (ppca64 ist der aarch64-Compiler)
 ln -sf /opt/fpc-cross/bin/ppca64 /usr/local/bin/ppca64
 ln -sf /opt/fpc-cross/bin/fpc /usr/local/bin/fpc-aarch64
 
-export FPC_UNIT_PATH="/opt/fpc-cross/units/aarch64-linux:/opt/fpc-native/units/x86_64-linux"
+# FPC-Umgebung
+export FPC_UNIT_PATH="/opt/fpc-cross/units/aarch64-linux:/usr/lib/fpc/3.2.2/units/x86_64-linux"
 
 which fpc && fpc -iV
 which fpc-aarch64 && fpc-aarch64 -iV
@@ -150,7 +146,6 @@ cmake .. \
   -DSDL_X11=ON -DSDL_ALSA=ON -DSDL_PULSEAUDIO=ON
 make -j$(nproc)
 make install
-
 SDL2_LIB=$(find /opt/sdl2-aarch64 -name libSDL2-2.0.so.0 -print -quit)
 cp "${SDL2_LIB}" "${OUT_LIBS}/libSDL2-2.0.so.0"
 cp /usr/lib/aarch64-linux-gnu/libSDL2_ttf-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null || true
@@ -191,8 +186,7 @@ cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
 EOFPC
 
 fpc-aarch64 @/tmp/fpc-aarch64.cfg \
-  -FuProjects/units \
-  -Fuengine -Fugame -Fuqcommon -Fuserver \
+  -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Mdelphi -Scgi \
   -O4 \
@@ -204,7 +198,6 @@ fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
-# Build-Output kopieren (nur Assets, keine Build-Artefakte)
 cp -r * "${PORT_OUT}/" 2>/dev/null || true
 find "${PORT_OUT}" -name "*.o" -delete
 find "${PORT_OUT}" -name "*.ppu" -delete
@@ -223,14 +216,8 @@ cp "${OUT_LIBS}"/*.so* "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
 # ============================================================
 echo "==> Generating PortMaster files"
 
-# --- 11a. Startskript ---
 cat > "${PORT_OUT}/Ekron Realms FPS.sh" <<'STARTSCRIPT'
 #!/bin/bash
-# ============================================================
-# Ekron Realms FPS - PortMaster Startskript
-# MAXIMALE Performance fuer RK3326 / ArkOS / aarch64
-# ============================================================
-
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 GAMEDIR="$(cd "$(dirname "$0")" && pwd)"
 CUR_DIR="$(pwd)"
@@ -248,7 +235,6 @@ fi
 source "$controlfolder/control.txt" 2>/dev/null || true
 [ -f "$controlfolder/device_info.txt" ] && source "$controlfolder/device_info.txt"
 
-# --- SDL2 / KMSDRM (Low-Latency) ---
 export SDL_VIDEODRIVER=kmsdrm
 export SDL_AUDIODRIVER=alsa
 export SDL_HINT_RENDER_DRIVER=opengles2
@@ -258,7 +244,6 @@ export SDL_HINT_VIDEO_DOUBLE_BUFFER=1
 export SDL_VIDEO_GL_DRIVER=libGL.so.1
 export SDL_VIDEO_EGL_DRIVER=libEGL.so.1
 
-# --- gl4es (Mali-G31 MP2) - Qualitaet + Performance ---
 export LIBGL_FB=1
 export LIBGL_ES=2
 export LIBGL_GL=21
@@ -272,32 +257,24 @@ export LIBGL_NODOWNSAMPLE=1
 export LIBGL_XREFRESH=1
 export LIBGL_STREAM=0
 
-# --- Mesa/GLES ---
 export MESA_GL_VERSION_OVERRIDE=2.1
 export MESA_GLSL_VERSION_OVERRIDE=120
 export MESA_EGL_NO_X11=1
 
-# --- CPU-Governor: alle Kerne auf Performance ---
 for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
   [ -f "$gov" ] && echo performance > "$gov" 2>/dev/null || true
 done
-
-# --- GPU-Governor: Performance + maximale Frequenz ---
 for gpu_gov in /sys/class/devfreq/*gpu/governor /sys/class/devfreq/ff400000.gpu/governor; do
   [ -f "$gpu_gov" ] && echo performance > "$gpu_gov" 2>/dev/null || true
 done
 
-# --- Bibliothekspfade ---
 export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:$LD_LIBRARY_PATH"
-
-# --- Start ---
 cd "$GAMEDIR"
 > "$GAMEDIR/log.txt" && exec > >(tee "$GAMEDIR/log.txt") 2>&1
 
 echo "=== Ekron Realms FPS (Max Performance) ==="
 echo "GAMEDIR: $GAMEDIR"
 echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-echo "CPU: $(nproc) Kerne"
 
 if [ -f "$GAMEDIR/ekron" ]; then
   "$GAMEDIR/ekron" "$@"
@@ -312,12 +289,10 @@ else
     exit 1
   fi
 fi
-
 cd "$CUR_DIR"
 STARTSCRIPT
 chmod +x "${PORT_OUT}/Ekron Realms FPS.sh"
 
-# --- 11b. port.json ---
 cat > "${PORT_OUT}/port.json" <<'PORTJSON'
 {
   "version": 3,
@@ -350,7 +325,6 @@ cat > "${PORT_OUT}/port.json" <<'PORTJSON'
 }
 PORTJSON
 
-# --- 11c. gameinfo.xml ---
 cat > "${PORT_OUT}/gameinfo.xml" <<'GAMEINFO'
 <?xml version="1.0"?>
 <gameList>
@@ -369,12 +343,9 @@ cat > "${PORT_OUT}/gameinfo.xml" <<'GAMEINFO'
 </gameList>
 GAMEINFO
 
-# --- 11d. config.cfg (Grafik so hoch wie moeglich) ---
 cat > "${PORT_OUT}/config.cfg" <<'CONFIGCFG'
-# ============================================================
 # Ekron Realms FPS - Konfiguration fuer RK3326 / ArkOS
 # Grafik so hoch wie moeglich (Mali-G31 MP2 + gl4es)
-# ============================================================
 
 [Video]
 Width=640
@@ -385,7 +356,6 @@ FPSLimit=30
 Renderer=OpenGL
 GLESVersion=2
 
-# Qualitaet (maximal fuer Mali-G31 MP2)
 TextureQuality=High
 ShadowQuality=Low
 ParticleEffects=High
@@ -428,7 +398,6 @@ CacheSize=64
 PreloadAssets=1
 CONFIGCFG
 
-# --- 11e. gl4es.cfg ---
 cat > "${PORT_OUT}/gl4es.cfg" <<'GL4ESCFG'
 # gl4es configuration for RK3326 (Mali-G31 MP2) - Quality + Performance
 LIBGL_FB=1
@@ -445,7 +414,6 @@ LIBGL_XREFRESH=1
 LIBGL_STREAM=0
 GL4ESCFG
 
-# --- 11f. sdl2.cfg ---
 cat > "${PORT_OUT}/sdl2.cfg" <<'SDL2CFG'
 # SDL2 configuration for RK3326
 SDL_VIDEODRIVER=kmsdrm
