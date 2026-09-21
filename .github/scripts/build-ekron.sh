@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERTE VERSION - DBus Include-Pfade fuer SDL2
+# MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
+# Abgesichert gegen alle bekannten Cross-Compile-Fallen
 # ============================================================
 set -e
 
@@ -32,6 +33,7 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
+#    VOLLSTAENDIG fuer SDL2, gl4es, FPC, Ekron Realms
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -46,8 +48,13 @@ apt-get install -y --no-install-recommends \
   libfreetype6-dev:arm64 libjpeg-dev:arm64 libpng-dev:arm64 zlib1g-dev:arm64 \
   libogg-dev:arm64 libvorbis-dev:arm64 libopus-dev:arm64 libopusfile-dev:arm64 \
   libopenal-dev:arm64 libspeex-dev:arm64 \
-  libx11-dev:arm64 libxext-dev:arm64 \
-  libudev-dev:arm64 libasound2-dev:arm64 libpulse-dev:arm64
+  libx11-dev:arm64 libxext-dev:arm64 libxrender-dev:arm64 libxrandr-dev:arm64 \
+  libxcursor-dev:arm64 libxi-dev:arm64 libxfixes-dev:arm64 libxss-dev:arm64 \
+  libxxf86vm-dev:arm64 libxtst-dev:arm64 \
+  libudev-dev:arm64 libasound2-dev:arm64 libpulse-dev:arm64 \
+  libwayland-dev:arm64 libdecor-0-dev:arm64 \
+  libunwind-dev:arm64 liblzma-dev:arm64 libbz2-dev:arm64 \
+  libvulkan-dev:arm64
 
 which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
@@ -62,12 +69,19 @@ unset PKG_CONFIG_SYSROOT_DIR
 echo "==> pkg-config ARM64 check:"
 pkg-config --libs libdrm gbm egl dbus-1 2>&1 || echo "WARN: pkg-config check failed"
 
-echo "==> dbus header check:"
-ls -la /usr/include/dbus-1.0/dbus/dbus.h 2>&1 || echo "dbus.h not found!"
-ls -la /usr/lib/aarch64-linux-gnu/dbus-1.0/include/dbus/dbus-arch-deps.h 2>&1 || echo "dbus-arch-deps.h not found!"
-
-echo "==> dbus pkg-config cflags:"
-pkg-config --cflags dbus-1 2>&1 || echo "pkg-config dbus-1 failed"
+echo "==> Critical header check:"
+for h in /usr/include/libdrm/drm.h \
+         /usr/include/xf86drm.h \
+         /usr/include/dbus-1.0/dbus/dbus.h \
+         /usr/lib/aarch64-linux-gnu/dbus-1.0/include/dbus/dbus-arch-deps.h \
+         /usr/include/EGL/egl.h \
+         /usr/include/GLES2/gl2.h; do
+  if [ -f "$h" ]; then
+    echo "  OK: $h"
+  else
+    echo "  MISSING: $h"
+  fi
+done
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler einrichten
@@ -113,7 +127,7 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 7. Toolchain-File
+# 7. Toolchain-File (mit ALLEN Include-Pfaden)
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
@@ -151,7 +165,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 9. SDL2 2.30.2 (Cross-Compile) - MIT DBus Include-Pfaden
+# 9. SDL2 2.30.2 (Cross-Compile) - MIT ALLEN Include-Pfaden
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -165,7 +179,10 @@ cmake .. \
   -DSDL_STATIC=OFF -DSDL_SHARED=ON \
   -DSDL_KMSDRM=ON -DSDL_WAYLAND=OFF \
   -DSDL_X11=ON -DSDL_ALSA=ON -DSDL_PULSEAUDIO=ON \
-  -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt -I/usr/include/dbus-1.0 -I/usr/lib/aarch64-linux-gnu/dbus-1.0/include"
+  -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt \
+-I/usr/include/libdrm \
+-I/usr/include/dbus-1.0 \
+-I/usr/lib/aarch64-linux-gnu/dbus-1.0/include"
 make -j$(nproc)
 make install
 SDL2_LIB=$(find /opt/sdl2-aarch64 -name libSDL2-2.0.so.0 -print -quit)
@@ -433,10 +450,21 @@ SDL_HINT_KMSDRM_REQUIRE_DRM_MASTER=1
 SDL_HINT_VIDEO_DOUBLE_BUFFER=1
 SDL2CFG
 
+# ------------------------------------------------------------
+# 13. Finale Ausgabe + Verifikation
+# ------------------------------------------------------------
 echo "=== Final PortMaster output ==="
 ls -la "${PORT_OUT}/"
 echo ""
 echo "=== libs.aarch64 ==="
 ls -la "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
+
+# Verifikation der Binaerdatei
+if [ -f "${PORT_OUT}/ekron" ]; then
+  echo ""
+  echo "=== Binary verification ==="
+  file "${PORT_OUT}/ekron"
+  aarch64-linux-gnu-readelf -h "${PORT_OUT}/ekron" | head -20 || true
+fi
 
 echo "==> Cross-Compile + PortMaster-Paketierung erfolgreich."
