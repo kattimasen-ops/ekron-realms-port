@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERTE VERSION - DRM-Header-Pfade fuer gl4es
+# KORRIGIERTE VERSION - DBus fuer SDL2
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -32,7 +32,7 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
-#    Inkl. linux-libc-dev fuer drm.h (uapi)
+#    NEU: libdbus-1-dev:arm64 + libsystemd-dev:arm64 fuer SDL2
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -40,6 +40,7 @@ apt-get install -y --no-install-recommends \
   crossbuild-essential-arm64 \
   libsdl2-dev:arm64 libsdl2-image-dev:arm64 libsdl2-mixer-dev:arm64 \
   libsdl2-ttf-dev:arm64 libsdl2-net-dev:arm64 \
+  libdbus-1-dev:arm64 libsystemd-dev:arm64 \
   libdrm-dev:arm64 libgbm-dev:arm64 libegl1-mesa-dev:arm64 libgles2-mesa-dev:arm64 \
   libgl1-mesa-dev:arm64 libglu1-mesa-dev:arm64 \
   linux-libc-dev:arm64 \
@@ -60,14 +61,10 @@ unset PKG_CONFIG_PATH
 unset PKG_CONFIG_SYSROOT_DIR
 
 echo "==> pkg-config ARM64 check:"
-pkg-config --libs libdrm gbm egl 2>&1 || echo "WARN: pkg-config check failed"
-
-# ------------------------------------------------------------
-# 3b. DRM-Header-Pfade verifizieren
-# ------------------------------------------------------------
-echo "==> DRM header locations:"
-find /usr/include -name "drm.h" 2>/dev/null || echo "drm.h not found!"
-find /usr/include -name "xf86drm.h" 2>/dev/null || echo "xf86drm.h not found!"
+pkg-config --libs libdrm gbm egl dbus-1 2>&1 || echo "WARN: pkg-config check failed"
+echo "==> dbus header check:"
+find /usr/include -name "dbus.h" 2>/dev/null || echo "dbus.h not found!"
+find /usr/lib/aarch64-linux-gnu -name "dbus-arch-deps.h" 2>/dev/null || echo "dbus-arch-deps.h not found!"
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler einrichten
@@ -113,27 +110,25 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 7. Toolchain-File (MIT DRM-Header-Pfaden)
+# 7. Toolchain-File
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
 set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
-# WICHTIG: /usr mit einschliessen, damit /usr/include/libdrm gefunden wird
 set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu /usr)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-# pkg-config auf ARM64-Pfade beschraenken
 set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
 set(ENV{PKG_CONFIG_SYSROOT_DIR} "/usr/aarch64-linux-gnu")
 EOF
 export TOOLCHAIN=/tmp/aarch64-toolchain.cmake
 
 # ------------------------------------------------------------
-# 8. gl4es (Cross-Compile) - MIT DRM-Include-Pfaden
+# 8. gl4es (Cross-Compile)
 # ------------------------------------------------------------
 echo "==> Building gl4es"
 cd "${SRC_DIR}"
@@ -153,7 +148,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 9. SDL2 2.30.2 (Cross-Compile)
+# 9. SDL2 2.30.2 (Cross-Compile) - MIT DBus
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -359,8 +354,6 @@ GAMEINFO
 
 cat > "${PORT_OUT}/config.cfg" <<'CONFIGCFG'
 # Ekron Realms FPS - Konfiguration fuer RK3326 / ArkOS
-# Grafik so hoch wie moeglich (Mali-G31 MP2 + gl4es)
-
 [Video]
 Width=640
 Height=480
@@ -369,7 +362,6 @@ VSync=0
 FPSLimit=30
 Renderer=OpenGL
 GLESVersion=2
-
 TextureQuality=High
 ShadowQuality=Low
 ParticleEffects=High
@@ -378,7 +370,6 @@ AnisotropicFiltering=2
 Bloom=On
 MotionBlur=Off
 DepthOfField=Off
-
 ViewDistance=80
 FOV=75
 
@@ -391,7 +382,6 @@ MusicVolume=60
 GamepadEnabled=1
 Deadzone=0.15
 Sensitivity=1.5
-
 MoveForward=DPAD_UP
 MoveBackward=DPAD_DOWN
 StrafeLeft=DPAD_LEFT
