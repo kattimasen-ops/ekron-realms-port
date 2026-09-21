@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERTE VERSION - pkg-config Cross-Support
+# KORRIGIERTE VERSION - DRM-Header-Pfade fuer gl4es
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -32,7 +32,7 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
-#    WICHTIG: libdrm-dev, libgbm-dev, libegl1-mesa-dev fuer gl4es
+#    Inkl. linux-libc-dev fuer drm.h (uapi)
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -42,6 +42,7 @@ apt-get install -y --no-install-recommends \
   libsdl2-ttf-dev:arm64 libsdl2-net-dev:arm64 \
   libdrm-dev:arm64 libgbm-dev:arm64 libegl1-mesa-dev:arm64 libgles2-mesa-dev:arm64 \
   libgl1-mesa-dev:arm64 libglu1-mesa-dev:arm64 \
+  linux-libc-dev:arm64 \
   libfreetype6-dev:arm64 libjpeg-dev:arm64 libpng-dev:arm64 zlib1g-dev:arm64 \
   libogg-dev:arm64 libvorbis-dev:arm64 libopus-dev:arm64 libopusfile-dev:arm64 \
   libopenal-dev:arm64 libspeex-dev:arm64 \
@@ -53,8 +54,6 @@ aarch64-linux-gnu-gcc --version | head -1
 
 # ------------------------------------------------------------
 # 3. pkg-config fuer ARM64 konfigurieren
-#    PKG_CONFIG_LIBDIR ersetzt die Standardpfade, damit nur
-#    ARM64-.pc-Dateien gefunden werden (kein Host-Pollution)
 # ------------------------------------------------------------
 export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
 unset PKG_CONFIG_PATH
@@ -62,6 +61,13 @@ unset PKG_CONFIG_SYSROOT_DIR
 
 echo "==> pkg-config ARM64 check:"
 pkg-config --libs libdrm gbm egl 2>&1 || echo "WARN: pkg-config check failed"
+
+# ------------------------------------------------------------
+# 3b. DRM-Header-Pfade verifizieren
+# ------------------------------------------------------------
+echo "==> DRM header locations:"
+find /usr/include -name "drm.h" 2>/dev/null || echo "drm.h not found!"
+find /usr/include -name "xf86drm.h" 2>/dev/null || echo "xf86drm.h not found!"
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler einrichten
@@ -107,14 +113,15 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 7. Toolchain-File (mit PKG_CONFIG_LIBDIR fuer CMake)
+# 7. Toolchain-File (MIT DRM-Header-Pfaden)
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
 set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
-set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
+# WICHTIG: /usr mit einschliessen, damit /usr/include/libdrm gefunden wird
+set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu /usr)
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
@@ -126,7 +133,7 @@ EOF
 export TOOLCHAIN=/tmp/aarch64-toolchain.cmake
 
 # ------------------------------------------------------------
-# 8. gl4es (Cross-Compile)
+# 8. gl4es (Cross-Compile) - MIT DRM-Include-Pfaden
 # ------------------------------------------------------------
 echo "==> Building gl4es"
 cd "${SRC_DIR}"
@@ -136,7 +143,7 @@ mkdir -p build && cd build
 cmake .. \
   -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN}" \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt" \
+  -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt -I/usr/include/libdrm -I/usr/include/drm" \
   -DNOX11=ON -DGBM=ON -DEGL_WRAPPER=ON \
   -DDEFAULT_ES=2 -DSTATICLIB=OFF
 make -j$(nproc)
