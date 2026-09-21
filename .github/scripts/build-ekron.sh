@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERTE VERSION - FPC aarch64 Cross-Compiler
+# KORRIGIERTE VERSION - pkg-config Cross-Support
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -32,26 +32,39 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
+#    WICHTIG: libdrm-dev, libgbm-dev, libegl1-mesa-dev fuer gl4es
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
-  build-essential git pkg-config ca-certificates wget file zip python3 ccache \
+  build-essential git pkg-config pkg-config-aarch64-linux-gnu ca-certificates wget file zip python3 ccache \
   crossbuild-essential-arm64 \
   libsdl2-dev:arm64 libsdl2-image-dev:arm64 libsdl2-mixer-dev:arm64 \
   libsdl2-ttf-dev:arm64 libsdl2-net-dev:arm64 \
+  libdrm-dev:arm64 libgbm-dev:arm64 libegl1-mesa-dev:arm64 libgles2-mesa-dev:arm64 \
   libgl1-mesa-dev:arm64 libglu1-mesa-dev:arm64 \
-  libegl1-mesa-dev:arm64 libgles2-mesa-dev:arm64 \
   libfreetype6-dev:arm64 libjpeg-dev:arm64 libpng-dev:arm64 zlib1g-dev:arm64 \
   libogg-dev:arm64 libvorbis-dev:arm64 libopus-dev:arm64 libopusfile-dev:arm64 \
   libopenal-dev:arm64 libspeex-dev:arm64 \
-  libgbm-dev:arm64 libdrm-dev:arm64 libx11-dev:arm64 libxext-dev:arm64 \
+  libx11-dev:arm64 libxext-dev:arm64 \
   libudev-dev:arm64 libasound2-dev:arm64 libpulse-dev:arm64
 
 which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
 
 # ------------------------------------------------------------
-# 3. FPC aarch64 Cross-Compiler einrichten (KORRIGIERT)
+# 3. pkg-config fuer ARM64 konfigurieren
+#    PKG_CONFIG_LIBDIR ersetzt die Standardpfade, damit nur
+#    ARM64-.pc-Dateien gefunden werden (kein Host-Pollution)
+# ------------------------------------------------------------
+export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
+unset PKG_CONFIG_PATH
+unset PKG_CONFIG_SYSROOT_DIR
+
+echo "==> pkg-config ARM64 check:"
+pkg-config --libs libdrm gbm egl 2>&1 || echo "WARN: pkg-config check failed"
+
+# ------------------------------------------------------------
+# 4. FPC aarch64 Cross-Compiler einrichten
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -62,24 +75,20 @@ wget -q "${FPC_AARCH64_URL}" -O /tmp/fpc-aarch64.tar
 mkdir -p /opt/fpc-aarch64
 tar -xf /tmp/fpc-aarch64.tar -C /opt/fpc-aarch64
 
-# Installationsskript ausfuehren (nicht-interaktiv)
 cd /opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux
 echo "y" | ./install.sh --no-checks 2>&1 | tail -5
 cd /
 
-# Cross-Compiler verlinken
-# Der aarch64-Compiler heisst ppca64
 ln -sf /usr/local/lib/fpc/${FPC_VERSION}/ppca64 /usr/local/bin/ppca64
 ln -sf /usr/local/bin/fpc /usr/local/bin/fpc-aarch64
 
-# FPC-Umgebung
 export FPC_UNIT_PATH="/usr/local/lib/fpc/${FPC_VERSION}/units/aarch64-linux"
 
 which fpc && fpc -iV
 which ppca64 && echo "ppca64 OK"
 
 # ------------------------------------------------------------
-# 4. Verzeichnisse
+# 5. Verzeichnisse
 # ------------------------------------------------------------
 export SRC_DIR="/work/src"
 export OUT_LIBS="/work/out/libs.aarch64"
@@ -87,7 +96,7 @@ export PORT_OUT="/work/out/ekron-realms"
 mkdir -p "${SRC_DIR}" "${OUT_LIBS}" "${PORT_OUT}"
 
 # ------------------------------------------------------------
-# 5. CMake 3.28.3 (fuer gl4es + SDL2)
+# 6. CMake 3.28.3
 # ------------------------------------------------------------
 echo "==> Installing CMake 3.28.3"
 CMAKE_VERSION=3.28.3
@@ -98,7 +107,7 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 6. Toolchain-File
+# 7. Toolchain-File (mit PKG_CONFIG_LIBDIR fuer CMake)
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
@@ -110,11 +119,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+# pkg-config auf ARM64-Pfade beschraenken
+set(ENV{PKG_CONFIG_LIBDIR} "/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "/usr/aarch64-linux-gnu")
 EOF
 export TOOLCHAIN=/tmp/aarch64-toolchain.cmake
 
 # ------------------------------------------------------------
-# 7. gl4es (Cross-Compile)
+# 8. gl4es (Cross-Compile)
 # ------------------------------------------------------------
 echo "==> Building gl4es"
 cd "${SRC_DIR}"
@@ -134,7 +146,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 8. SDL2 2.30.2 (Cross-Compile)
+# 9. SDL2 2.30.2 (Cross-Compile)
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -157,7 +169,7 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_image-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 9. Ekron Realms (FPC Cross-Compile - MAXIMIERT)
+# 10. Ekron Realms (FPC Cross-Compile - MAXIMIERT)
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
@@ -203,13 +215,13 @@ find "${PORT_OUT}" -name "*.lpi" -delete
 find "${PORT_OUT}" -name "*.lpr" -delete
 
 # ------------------------------------------------------------
-# 10. Bibliotheken kopieren
+# 11. Bibliotheken kopieren
 # ------------------------------------------------------------
 mkdir -p "${PORT_OUT}/libs.aarch64"
 cp "${OUT_LIBS}"/*.so* "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
 
 # ============================================================
-# 11. PORTMASTER-DATEIEN GENERIEREN
+# 12. PORTMASTER-DATEIEN GENERIEREN
 # ============================================================
 echo "==> Generating PortMaster files"
 
