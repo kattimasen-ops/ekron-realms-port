@@ -1,0 +1,28 @@
+name: Build Ekron Realms FPS (RK3326 / ARM64 - Max Performance)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-aarch64:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Cross-Compile im Ubuntu 20.04 Container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            ubuntu:20.04 \
+            bash /work/.github/scripts/build-ekron.sh
+
+      - name: Build-Artefakte hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ekron-realms-rk3326-aarch64
+          path: out/ekron-realms/
+          if-no-files-found: error
