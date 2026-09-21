@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERTE VERSION - DBus fuer SDL2
+# KORRIGIERTE VERSION - DBus Include-Pfade fuer SDL2
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -32,7 +32,6 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
-#    NEU: libdbus-1-dev:arm64 + libsystemd-dev:arm64 fuer SDL2
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -62,9 +61,13 @@ unset PKG_CONFIG_SYSROOT_DIR
 
 echo "==> pkg-config ARM64 check:"
 pkg-config --libs libdrm gbm egl dbus-1 2>&1 || echo "WARN: pkg-config check failed"
+
 echo "==> dbus header check:"
-find /usr/include -name "dbus.h" 2>/dev/null || echo "dbus.h not found!"
-find /usr/lib/aarch64-linux-gnu -name "dbus-arch-deps.h" 2>/dev/null || echo "dbus-arch-deps.h not found!"
+ls -la /usr/include/dbus-1.0/dbus/dbus.h 2>&1 || echo "dbus.h not found!"
+ls -la /usr/lib/aarch64-linux-gnu/dbus-1.0/include/dbus/dbus-arch-deps.h 2>&1 || echo "dbus-arch-deps.h not found!"
+
+echo "==> dbus pkg-config cflags:"
+pkg-config --cflags dbus-1 2>&1 || echo "pkg-config dbus-1 failed"
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler einrichten
@@ -148,7 +151,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 9. SDL2 2.30.2 (Cross-Compile) - MIT DBus
+# 9. SDL2 2.30.2 (Cross-Compile) - MIT DBus Include-Pfaden
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -161,7 +164,8 @@ cmake .. \
   -DCMAKE_INSTALL_PREFIX=/opt/sdl2-aarch64 \
   -DSDL_STATIC=OFF -DSDL_SHARED=ON \
   -DSDL_KMSDRM=ON -DSDL_WAYLAND=OFF \
-  -DSDL_X11=ON -DSDL_ALSA=ON -DSDL_PULSEAUDIO=ON
+  -DSDL_X11=ON -DSDL_ALSA=ON -DSDL_PULSEAUDIO=ON \
+  -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt -I/usr/include/dbus-1.0 -I/usr/lib/aarch64-linux-gnu/dbus-1.0/include"
 make -j$(nproc)
 make install
 SDL2_LIB=$(find /opt/sdl2-aarch64 -name libSDL2-2.0.so.0 -print -quit)
