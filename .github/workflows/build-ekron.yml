@@ -12,12 +12,20 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
 
-      - name: Cross-Compile im Ubuntu 20.04 Container
+      - name: Build-Skript schreiben (falls nicht vorhanden)
+        run: |
+          mkdir -p .github/scripts
+          if [ ! -f .github/scripts/build-ekron.sh ]; then
+            echo "Build-Skript fehlt – bitte anlegen!"
+            exit 1
+          fi
+
+      - name: Cross-Compile im FPC 3.2.2 (Focal) Container
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -w /work \
-            ubuntu:20.04 \
+            freepascal/fpc:3.2.2-focal-full \
             bash /work/.github/scripts/build-ekron.sh
 
       - name: Build-Artefakte hochladen
