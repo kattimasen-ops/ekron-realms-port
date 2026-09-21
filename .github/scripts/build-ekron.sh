@@ -1,15 +1,13 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# MAXIMALE Performance-Version
-# Basiert auf Quake-2-Engine (Object Pascal Port)
+# KORRIGIERTE VERSION - FPC aarch64 Cross-Compiler
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
 
 export DEBIAN_FRONTEND=noninteractive
 echo "==> Host arch: $(uname -m)"
-echo "==> FPC version: $(fpc -iV 2>/dev/null || echo 'not found')"
 
 # ------------------------------------------------------------
 # 1. Multiarch + apt-Quellen
@@ -53,26 +51,32 @@ which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
 
 # ------------------------------------------------------------
-# 3. FPC-Cross-Compiler fuer aarch64 einrichten
-#    (FPC selbst ist bereits im Docker-Image installiert!)
+# 3. FPC aarch64 Cross-Compiler einrichten (KORRIGIERT)
 # ------------------------------------------------------------
-echo "==> Setting up FPC cross-compiler for aarch64"
+echo "==> Setting up FPC aarch64 cross-compiler"
 
 FPC_VERSION="3.2.2"
-FPC_CROSS_URL="https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/x86_64-linux/fpc-${FPC_VERSION}-aarch64-linux.cross.x86_64-linux.tar"
-wget -q "${FPC_CROSS_URL}" -O /tmp/fpc-cross.tar
-mkdir -p /opt/fpc-cross
-tar -xf /tmp/fpc-cross.tar -C /opt/fpc-cross
+FPC_AARCH64_URL="https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/aarch64-linux/fpc-${FPC_VERSION}.aarch64-linux.tar"
 
-# Cross-Compiler verlinken (ppca64 ist der aarch64-Compiler)
-ln -sf /opt/fpc-cross/bin/ppca64 /usr/local/bin/ppca64
-ln -sf /opt/fpc-cross/bin/fpc /usr/local/bin/fpc-aarch64
+wget -q "${FPC_AARCH64_URL}" -O /tmp/fpc-aarch64.tar
+mkdir -p /opt/fpc-aarch64
+tar -xf /tmp/fpc-aarch64.tar -C /opt/fpc-aarch64
+
+# Installationsskript ausfuehren (nicht-interaktiv)
+cd /opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux
+echo "y" | ./install.sh --no-checks 2>&1 | tail -5
+cd /
+
+# Cross-Compiler verlinken
+# Der aarch64-Compiler heisst ppca64
+ln -sf /usr/local/lib/fpc/${FPC_VERSION}/ppca64 /usr/local/bin/ppca64
+ln -sf /usr/local/bin/fpc /usr/local/bin/fpc-aarch64
 
 # FPC-Umgebung
-export FPC_UNIT_PATH="/opt/fpc-cross/units/aarch64-linux:/usr/lib/fpc/3.2.2/units/x86_64-linux"
+export FPC_UNIT_PATH="/usr/local/lib/fpc/${FPC_VERSION}/units/aarch64-linux"
 
 which fpc && fpc -iV
-which fpc-aarch64 && fpc-aarch64 -iV
+which ppca64 && echo "ppca64 OK"
 
 # ------------------------------------------------------------
 # 4. Verzeichnisse
@@ -168,16 +172,9 @@ fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
 cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
--Fu/opt/fpc-cross/units/aarch64-linux
--Fu/opt/fpc-cross/units/aarch64-linux/rtl
--Fu/opt/fpc-cross/units/aarch64-linux/packages
--Fu/opt/fpc-cross/units/aarch64-linux/packages/base
--Fu/opt/fpc-cross/units/aarch64-linux/packages/fcl-base
--Fu/opt/fpc-cross/units/aarch64-linux/packages/fcl-process
--Fu/opt/fpc-cross/units/aarch64-linux/packages/rtl-extra
--Fu/opt/fpc-cross/units/aarch64-linux/packages/rtl-generics
--Fu/opt/fpc-cross/units/aarch64-linux/packages/rtl-objpas
--Fu/opt/fpc-cross/units/aarch64-linux/packages/rtl-unicode
+-Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux
+-Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/rtl
+-Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/packages
 -Fl/usr/lib/aarch64-linux-gnu
 -Fd/usr/lib/aarch64-linux-gnu
 -XPppca64
@@ -194,7 +191,7 @@ fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -CpARMV8 -CfNEON \
   -XX -CX -Xs \
   -OW \
-  -k--gc-sections -k-O1 -k--as-needed -k-z -know -k-z -krelro \
+  -k--gc-sections -k-O1 -k--as-needed \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
@@ -332,8 +329,6 @@ cat > "${PORT_OUT}/gameinfo.xml" <<'GAMEINFO'
     <path>./Ekron Realms FPS.sh</path>
     <name>Ekron Realms FPS</name>
     <desc>Open-Source Ego-Shooter (Quake-2-Engine, Object Pascal). Maximale ARM64-Performance mit NEON, gl4es und Smart Linking.</desc>
-    <image>./ekron-realms/cover.png</image>
-    <thumbnail>./ekron-realms/thumb.png</thumbnail>
     <releasedate>20240101T000000</releasedate>
     <developer>RingsCE</developer>
     <publisher>RingsCE</publisher>
@@ -399,7 +394,7 @@ PreloadAssets=1
 CONFIGCFG
 
 cat > "${PORT_OUT}/gl4es.cfg" <<'GL4ESCFG'
-# gl4es configuration for RK3326 (Mali-G31 MP2) - Quality + Performance
+# gl4es configuration for RK3326 (Mali-G31 MP2)
 LIBGL_FB=1
 LIBGL_ES=2
 LIBGL_GL=21
@@ -425,9 +420,6 @@ SDL_HINT_KMSDRM_REQUIRE_DRM_MASTER=1
 SDL_HINT_VIDEO_DOUBLE_BUFFER=1
 SDL2CFG
 
-# ------------------------------------------------------------
-# 12. Ausgabe
-# ------------------------------------------------------------
 echo "=== Final PortMaster output ==="
 ls -la "${PORT_OUT}/"
 echo ""
