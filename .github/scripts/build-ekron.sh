@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: base.aarch64-linux.tar.gz entpacken
+# KORRIGIERT: QEMU-basierte Ausfuehrung von ppca64
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -87,7 +87,7 @@ done
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler (KORRIGIERT)
-#    Entpacke base.aarch64-linux.tar.gz -> ppca64 + Units
+#    ppca64 ist ARM64-Binary -> QEMU-binfmt muss aktiv sein!
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -100,26 +100,22 @@ tar -xf /tmp/fpc-aarch64-wrapper.tar -C /opt/fpc-aarch64
 
 FPC_CROSS_DIR="/opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux"
 
-# --- WICHTIG: binary.aarch64-linux.tar entpacken (Wrapper) ---
+# --- Wrapper-Tarball entpacken ---
 BINARY_TAR="${FPC_CROSS_DIR}/binary.aarch64-linux.tar"
 if [ ! -f "${BINARY_TAR}" ]; then
   echo "[ERROR] ${BINARY_TAR} nicht gefunden!"
   ls -la "${FPC_CROSS_DIR}/"
   exit 1
 fi
-
-echo "==> Entpacke binary.aarch64-linux.tar nach ${FPC_CROSS_DIR}/"
 tar -xf "${BINARY_TAR}" -C "${FPC_CROSS_DIR}/"
 
-# --- WICHTIG: base.aarch64-linux.tar.gz entpacken (enthaelt ppca64 + Units) ---
+# --- base.aarch64-linux.tar.gz entpacken (enthaelt ppca64 + Units) ---
 BASE_TAR="${FPC_CROSS_DIR}/base.aarch64-linux.tar.gz"
 if [ ! -f "${BASE_TAR}" ]; then
   echo "[ERROR] ${BASE_TAR} nicht gefunden!"
   ls -la "${FPC_CROSS_DIR}/"
   exit 1
 fi
-
-echo "==> Entpacke base.aarch64-linux.tar.gz nach ${FPC_CROSS_DIR}/"
 tar -xzf "${BASE_TAR}" -C "${FPC_CROSS_DIR}/"
 
 # --- ppca64-Backend suchen ---
@@ -134,7 +130,7 @@ for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
 done
 
 if [ -z "${PPCA64_PATH}" ]; then
-  echo "[ERROR] ppca64-Backend nicht gefunden. Suche im gesamten Verzeichnis..."
+  echo "[ERROR] ppca64-Backend nicht gefunden."
   find "${FPC_CROSS_DIR}" -name "ppca64" -type f 2>/dev/null
   exit 1
 fi
@@ -151,22 +147,39 @@ for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/units/aarch64-linux" \
 done
 
 if [ -z "${FPC_UNITS_AARCH64}" ]; then
-  echo "[ERROR] aarch64-Units nicht gefunden. Suche im gesamten Verzeichnis..."
+  echo "[ERROR] aarch64-Units nicht gefunden."
   find "${FPC_CROSS_DIR}" -type d -name "aarch64-linux" 2>/dev/null
   exit 1
 fi
 echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
 
-# ppca64 nach /usr/local/bin kopieren
+# --- ppca64 nach /usr/local/bin kopieren UND Wrapper-Skript erstellen ---
 cp "${PPCA64_PATH}" /usr/local/bin/ppca64
 chmod +x /usr/local/bin/ppca64
+
+# Wrapper-Skript: ruft fpc mit den richtigen Flags auf
+cat > /usr/local/bin/fpc-aarch64 <<'WRAPPER_EOF'
+#!/bin/bash
+exec fpc -Paarch64 -Tlinux -XP/usr/local/bin/ppca64 "$@"
+WRAPPER_EOF
+chmod +x /usr/local/bin/fpc-aarch64
+
 export PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
 
-# Native fpc aus dem Docker-Image verifizieren
+# Verifikation: QEMU-binfmt muss ppca64 ausfuehren koennen
 echo "==> Native fpc gefunden: $(command -v fpc)"
 fpc -iV
 
-echo "==> ppca64 verlinkt: $(command -v ppca64)"
+echo "==> ppca64 gefunden: $(command -v ppca64)"
+if command -v ppca64 &>/dev/null; then
+  if ppca64 -i 2>&1 | head -1; then
+    echo "==> ppca64 ist ausfuehrbar (QEMU-binfmt aktiv)"
+  else
+    echo "[WARN] ppca64 konnte nicht ausgefuehrt werden - QEMU-binfmt fehlt?"
+  fi
+fi
+
+echo "==> fpc-aarch64 Wrapper: $(command -v fpc-aarch64)"
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -287,9 +300,8 @@ if [ ! -f "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Aufruf mit vollem Cross-Setup ---
-fpc \
-  -Paarch64 -Tlinux \
+# --- FPC-Aufruf mit Wrapper-Skript ---
+fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}" \
   -Fu"${FPC_UNITS_AARCH64}/rtl" \
   -Fu"${FPC_UNITS_AARCH64}/rtl-extra" \
@@ -309,7 +321,6 @@ fpc \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Fl/usr/lib/aarch64-linux-gnu \
   -Fd/usr/lib/aarch64-linux-gnu \
-  -XP"${PPCA64_PATH}" \
   -Mdelphi -Scgi \
   -O4 \
   -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
