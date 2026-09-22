@@ -14,6 +14,11 @@ jobs:
         with:
           submodules: false
 
+      - name: QEMU für ARM64-Ausführung einrichten
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Cross-Compile im FPC 3.2.2 Container
         run: |
           docker run --rm \
