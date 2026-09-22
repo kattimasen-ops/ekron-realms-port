@@ -3,7 +3,7 @@
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# KORRIGIERT: -CfNEON entfernt (kein gueltiger FPC-Parameter)
+# KORRIGIERT: sys_linux Unit-Pfad hinzugefuegt
 # ============================================================
 set -e
 
@@ -263,7 +263,7 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 
 # ------------------------------------------------------------
 # 10. Ekron Realms (FPC Cross-Compile) - KORRIGIERT
-#     -CfNEON entfernt (kein gueltiger FPC-Parameter)
+#     sys_linux Unit-Pfad hinzugefuegt
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
@@ -284,6 +284,19 @@ if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   exit 1
 fi
 
+# --- Diagnose: Verzeichnisstruktur ausgeben ---
+echo "==> Diagnose: Projektestruktur"
+echo "--- Top-Level ---"
+ls -la
+echo "--- Projects/ ---"
+ls -la Projects/ 2>/dev/null || true
+echo "--- Projects/units/ ---"
+ls -la Projects/units/ 2>/dev/null || true
+echo "--- Suche nach sys_linux.pas ---"
+find . -name "sys_linux.pas" -type f 2>/dev/null || echo "  sys_linux.pas nicht gefunden"
+echo "--- Suche nach *.pas Dateien in Projects/ ---"
+find Projects/ -name "*.pas" -type f 2>/dev/null | head -30 || true
+
 MAIN_LPR="Projects/realms.lpr"
 if [ ! -f "${MAIN_LPR}" ]; then
   echo "[ERROR] ${MAIN_LPR} nicht gefunden!"
@@ -292,6 +305,9 @@ if [ ! -f "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
+# --- FPC-Aufruf mit Wrapper-Skript und erweiterten Unit-Pfaden ---
+# WICHTIG: Alle Verzeichnisse mit Pascal-Units muessen im -Fu-Pfad stehen,
+#          insbesondere Projects/units/sys/linux fuer sys_linux.pas
 fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}" \
   -Fu"${FPC_UNITS_AARCH64}/rtl" \
@@ -308,8 +324,13 @@ fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}/packages/rtl-objpas" \
   -Fu"${FPC_UNITS_AARCH64}/packages/rtl-unicode" \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
-  -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
+  -FuProjects/units \
+  -FuProjects/units/sys \
+  -FuProjects/units/sys/linux \
+  -FuProjects \
+  -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
+  -Fu"$(pwd)" \
   -Fl/usr/lib/aarch64-linux-gnu \
   -Mdelphi -Scgi \
   -O4 \
