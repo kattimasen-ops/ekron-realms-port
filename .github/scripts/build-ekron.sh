@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: fpc mit -Paarch64 -Tlinux statt fpc-aarch64
+# KORRIGIERT: FPC-Cross ohne install.sh (Bug-Umgehung)
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -86,7 +86,9 @@ for h in /usr/include/libdrm/drm.h \
 done
 
 # ------------------------------------------------------------
-# 4. FPC aarch64 Cross-Compiler einrichten (KORRIGIERT)
+# 4. FPC aarch64 Cross-Compiler (OHNE install.sh)
+#    Das freepascal/fpc-Image hat FPC bereits nativ installiert.
+#    Wir benoetigen nur das ppca64-Backend + aarch64-Units.
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -97,29 +99,61 @@ wget -q "${FPC_AARCH64_URL}" -O /tmp/fpc-aarch64.tar
 mkdir -p /opt/fpc-aarch64
 tar -xf /tmp/fpc-aarch64.tar -C /opt/fpc-aarch64
 
-cd /opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux
-echo "y" | ./install.sh --no-checks 2>&1 | tail -5
-cd /
-
-# WICHTIG: Kein fpc-aarch64-Symlink! Der fpc-Wrapper waehlt das Backend
-# automatisch anhand von -Paarch64 -Tlinux.
-# Nur den ppca64-Compiler verlinken, falls er nicht im PATH ist.
-if [ ! -x /usr/local/lib/fpc/${FPC_VERSION}/ppca64 ]; then
-  echo "[ERROR] ppca64 nicht gefunden!"
-  find / -name "ppca64" -type f 2>/dev/null | head -5
+FPC_CROSS_DIR="/opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux"
+if [ ! -d "${FPC_CROSS_DIR}" ]; then
+  echo "[ERROR] FPC-Cross-Verzeichnis nicht gefunden: ${FPC_CROSS_DIR}"
+  ls -la /opt/fpc-aarch64/
   exit 1
 fi
-ln -sf /usr/local/lib/fpc/${FPC_VERSION}/ppca64 /usr/local/bin/ppca64
 
-# PATH explizit erweitern
-export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
+echo "==> FPC-Cross-Verzeichnis: ${FPC_CROSS_DIR}"
+echo "==> Verzeichnisstruktur (Top-Level):"
+ls -la "${FPC_CROSS_DIR}/"
 
-# Verifikation
-echo "==> fpc gefunden: $(command -v fpc)"
+# ppca64-Backend suchen (mehrere moegliche Pfade)
+PPCA64_PATH=""
+for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
+         "${FPC_CROSS_DIR}/bin/ppca64" \
+         "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" ; do
+  if [ -x "$p" ] && [ -f "$p" ]; then
+    PPCA64_PATH="$p"
+    break
+  fi
+done
+
+if [ -z "${PPCA64_PATH}" ]; then
+  echo "[ERROR] ppca64-Backend nicht gefunden. Suche im gesamten Tarball..."
+  find "${FPC_CROSS_DIR}" -name "ppca64" -type f 2>/dev/null
+  exit 1
+fi
+echo "==> ppca64 gefunden: ${PPCA64_PATH}"
+
+# aarch64-Units suchen
+FPC_UNITS_AARCH64=""
+for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/units/aarch64-linux" \
+         "${FPC_CROSS_DIR}/units/aarch64-linux" ; do
+  if [ -d "$p" ]; then
+    FPC_UNITS_AARCH64="$p"
+    break
+  fi
+done
+
+if [ -z "${FPC_UNITS_AARCH64}" ]; then
+  echo "[ERROR] aarch64-Units nicht gefunden. Suche im gesamten Tarball..."
+  find "${FPC_CROSS_DIR}" -type d -name "aarch64-linux" 2>/dev/null
+  exit 1
+fi
+echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
+
+# Verlinken fuer einfachen Zugriff
+ln -sf "${PPCA64_PATH}" /usr/local/bin/ppca64
+export PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
+
+# Native fpc aus dem Docker-Image verifizieren
+echo "==> Native fpc gefunden: $(command -v fpc)"
 fpc -iV
 
-echo "==> ppca64 gefunden: $(command -v ppca64)"
-ppca64 -iV 2>/dev/null || echo "  (ppca64 ist ein Backend, kein eigenstaendiger Compiler)"
+echo "==> ppca64 verlinkt: $(command -v ppca64)"
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -230,38 +264,45 @@ if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   ls -la tools/SDL2-for-Pascal/
   exit 1
 fi
-echo "==> SDL2-for-Pascal Units gefunden"
 
 # --- Hauptprogramm EXPLIZIT setzen ---
 MAIN_LPR="Projects/realms.lpr"
 if [ ! -f "${MAIN_LPR}" ]; then
   echo "[ERROR] ${MAIN_LPR} nicht gefunden!"
-  echo "Verfuegbare .lpr-Dateien:"
   find . -name "*.lpr"
   exit 1
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Konfiguration (KORRIGIERT: aarch64-Units explizit) ---
-FPC_UNIT_BASE="/usr/local/lib/fpc/${FPC_VERSION}/units/aarch64-linux"
-if [ ! -d "${FPC_UNIT_BASE}" ]; then
-  echo "[ERROR] aarch64-Units nicht gefunden unter ${FPC_UNIT_BASE}!"
-  find /usr/local/lib/fpc -name "aarch64-linux" -type d 2>/dev/null
-  exit 1
-fi
+# --- Units-Verzeichnisse auflisten (Diagnose) ---
+echo "==> Verfuegbare aarch64-Units:"
+ls "${FPC_UNITS_AARCH64}/" 2>/dev/null || true
+echo "==> Verfuegbare packages:"
+ls "${FPC_UNITS_AARCH64}/packages/" 2>/dev/null || true
 
-# --- FPC-Aufruf (KORRIGIERT: -Paarch64 -Tlinux statt fpc-aarch64) ---
+# --- FPC-Aufruf mit vollem Cross-Setup ---
 fpc \
   -Paarch64 -Tlinux \
-  -Fu"${FPC_UNIT_BASE}" \
-  -Fu"${FPC_UNIT_BASE}/rtl" \
-  -Fu"${FPC_UNIT_BASE}/packages" \
+  -Fu"${FPC_UNITS_AARCH64}" \
+  -Fu"${FPC_UNITS_AARCH64}/rtl" \
+  -Fu"${FPC_UNITS_AARCH64}/rtl-extra" \
+  -Fu"${FPC_UNITS_AARCH64}/rtl-generics" \
+  -Fu"${FPC_UNITS_AARCH64}/rtl-objpas" \
+  -Fu"${FPC_UNITS_AARCH64}/rtl-unicode" \
+  -Fu"${FPC_UNITS_AARCH64}/packages" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/base" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/fcl-base" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/fcl-process" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/rtl-extra" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/rtl-generics" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/rtl-objpas" \
+  -Fu"${FPC_UNITS_AARCH64}/packages/rtl-unicode" \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
   -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Fl/usr/lib/aarch64-linux-gnu \
   -Fd/usr/lib/aarch64-linux-gnu \
-  -XPppca64 \
+  -XP"${PPCA64_PATH}" \
   -Mdelphi -Scgi \
   -O4 \
   -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
