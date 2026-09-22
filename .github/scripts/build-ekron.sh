@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: binary.aarch64-linux.tar entpacken
+# KORRIGIERT: base.aarch64-linux.tar.gz entpacken
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -87,7 +87,7 @@ done
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler (KORRIGIERT)
-#    binary.aarch64-linux.tar entpacken -> ppca64 + Units
+#    Entpacke base.aarch64-linux.tar.gz -> ppca64 + Units
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -100,7 +100,7 @@ tar -xf /tmp/fpc-aarch64-wrapper.tar -C /opt/fpc-aarch64
 
 FPC_CROSS_DIR="/opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux"
 
-# WICHTIG: binary.aarch64-linux.tar entpacken
+# --- WICHTIG: binary.aarch64-linux.tar entpacken (Wrapper) ---
 BINARY_TAR="${FPC_CROSS_DIR}/binary.aarch64-linux.tar"
 if [ ! -f "${BINARY_TAR}" ]; then
   echo "[ERROR] ${BINARY_TAR} nicht gefunden!"
@@ -111,10 +111,18 @@ fi
 echo "==> Entpacke binary.aarch64-linux.tar nach ${FPC_CROSS_DIR}/"
 tar -xf "${BINARY_TAR}" -C "${FPC_CROSS_DIR}/"
 
-echo "==> Verzeichnisstruktur nach dem Entpacken:"
-ls -la "${FPC_CROSS_DIR}/"
+# --- WICHTIG: base.aarch64-linux.tar.gz entpacken (enthaelt ppca64 + Units) ---
+BASE_TAR="${FPC_CROSS_DIR}/base.aarch64-linux.tar.gz"
+if [ ! -f "${BASE_TAR}" ]; then
+  echo "[ERROR] ${BASE_TAR} nicht gefunden!"
+  ls -la "${FPC_CROSS_DIR}/"
+  exit 1
+fi
 
-# ppca64-Backend suchen
+echo "==> Entpacke base.aarch64-linux.tar.gz nach ${FPC_CROSS_DIR}/"
+tar -xzf "${BASE_TAR}" -C "${FPC_CROSS_DIR}/"
+
+# --- ppca64-Backend suchen ---
 PPCA64_PATH=""
 for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
          "${FPC_CROSS_DIR}/bin/ppca64" \
@@ -132,7 +140,7 @@ if [ -z "${PPCA64_PATH}" ]; then
 fi
 echo "==> ppca64 gefunden: ${PPCA64_PATH}"
 
-# aarch64-Units suchen
+# --- aarch64-Units suchen ---
 FPC_UNITS_AARCH64=""
 for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/units/aarch64-linux" \
          "${FPC_CROSS_DIR}/units/aarch64-linux" ; do
@@ -149,7 +157,7 @@ if [ -z "${FPC_UNITS_AARCH64}" ]; then
 fi
 echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
 
-# ppca64 nach /usr/local/bin kopieren (nicht nur verlinken)
+# ppca64 nach /usr/local/bin kopieren
 cp "${PPCA64_PATH}" /usr/local/bin/ppca64
 chmod +x /usr/local/bin/ppca64
 export PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
@@ -159,7 +167,6 @@ echo "==> Native fpc gefunden: $(command -v fpc)"
 fpc -iV
 
 echo "==> ppca64 verlinkt: $(command -v ppca64)"
-ppca64 -iV 2>/dev/null || true
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
