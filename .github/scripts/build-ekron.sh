@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: Expliziter FPC-Pfad + Hauptprogramm
+# KORRIGIERT: fpc mit -Paarch64 -Tlinux statt fpc-aarch64
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -86,7 +86,7 @@ for h in /usr/include/libdrm/drm.h \
 done
 
 # ------------------------------------------------------------
-# 4. FPC aarch64 Cross-Compiler einrichten
+# 4. FPC aarch64 Cross-Compiler einrichten (KORRIGIERT)
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -101,25 +101,25 @@ cd /opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux
 echo "y" | ./install.sh --no-checks 2>&1 | tail -5
 cd /
 
-# FPC-Binary-Pfad ermitteln
-FPC_AARCH64_BIN="/usr/local/bin/fpc-aarch64"
-if [ ! -x "$FPC_AARCH64_BIN" ]; then
-  # Fallback: Symlink neu erstellen
-  ln -sf /usr/local/bin/fpc /usr/local/bin/fpc-aarch64
+# WICHTIG: Kein fpc-aarch64-Symlink! Der fpc-Wrapper waehlt das Backend
+# automatisch anhand von -Paarch64 -Tlinux.
+# Nur den ppca64-Compiler verlinken, falls er nicht im PATH ist.
+if [ ! -x /usr/local/lib/fpc/${FPC_VERSION}/ppca64 ]; then
+  echo "[ERROR] ppca64 nicht gefunden!"
+  find / -name "ppca64" -type f 2>/dev/null | head -5
+  exit 1
 fi
+ln -sf /usr/local/lib/fpc/${FPC_VERSION}/ppca64 /usr/local/bin/ppca64
 
 # PATH explizit erweitern
 export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
 
 # Verifikation
-if ! command -v fpc-aarch64 &>/dev/null; then
-  echo "[ERROR] fpc-aarch64 nicht im PATH gefunden!"
-  echo "PATH: $PATH"
-  ls -la /usr/local/bin/fpc* 2>/dev/null || true
-  exit 1
-fi
-echo "==> fpc-aarch64 gefunden: $(command -v fpc-aarch64)"
-fpc-aarch64 -iV
+echo "==> fpc gefunden: $(command -v fpc)"
+fpc -iV
+
+echo "==> ppca64 gefunden: $(command -v ppca64)"
+ppca64 -iV 2>/dev/null || echo "  (ppca64 ist ein Backend, kein eigenstaendiger Compiler)"
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -216,7 +216,7 @@ cd "${SRC_DIR}"
 git clone --depth=1 https://github.com/ringsce/ekron-realms.git
 cd ekron-realms
 
-# --- Submodul-Fix: defekten Gitlink entfernen und SDL2-for-Pascal manuell klonen ---
+# --- Submodul-Fix ---
 echo "==> Fixing broken submodule tools/SDL2-for-Pascal"
 if [ -e "tools/SDL2-for-Pascal" ]; then
   rm -rf "tools/SDL2-for-Pascal"
@@ -233,7 +233,6 @@ fi
 echo "==> SDL2-for-Pascal Units gefunden"
 
 # --- Hauptprogramm EXPLIZIT setzen ---
-# Das Spiel heisst realms.lpr, nicht DebuggerMain.lpr
 MAIN_LPR="Projects/realms.lpr"
 if [ ! -f "${MAIN_LPR}" ]; then
   echo "[ERROR] ${MAIN_LPR} nicht gefunden!"
@@ -243,23 +242,26 @@ if [ ! -f "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Konfiguration ---
-cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
--Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux
--Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/rtl
--Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/packages
--Fl/usr/lib/aarch64-linux-gnu
--Fd/usr/lib/aarch64-linux-gnu
--XPppca64
--Tlinux
--Paarch64
-EOFPC
+# --- FPC-Konfiguration (KORRIGIERT: aarch64-Units explizit) ---
+FPC_UNIT_BASE="/usr/local/lib/fpc/${FPC_VERSION}/units/aarch64-linux"
+if [ ! -d "${FPC_UNIT_BASE}" ]; then
+  echo "[ERROR] aarch64-Units nicht gefunden unter ${FPC_UNIT_BASE}!"
+  find /usr/local/lib/fpc -name "aarch64-linux" -type d 2>/dev/null
+  exit 1
+fi
 
-# --- FPC-Aufruf mit explizitem Pfad ---
-/usr/local/bin/fpc-aarch64 @/tmp/fpc-aarch64.cfg \
+# --- FPC-Aufruf (KORRIGIERT: -Paarch64 -Tlinux statt fpc-aarch64) ---
+fpc \
+  -Paarch64 -Tlinux \
+  -Fu"${FPC_UNIT_BASE}" \
+  -Fu"${FPC_UNIT_BASE}/rtl" \
+  -Fu"${FPC_UNIT_BASE}/packages" \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
   -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
+  -Fl/usr/lib/aarch64-linux-gnu \
+  -Fd/usr/lib/aarch64-linux-gnu \
+  -XPppca64 \
   -Mdelphi -Scgi \
   -O4 \
   -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
