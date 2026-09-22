@@ -1,10 +1,8 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# MAXIMALE Performance-Version
+# KORRIGIERT: Expliziter FPC-Pfad + Hauptprogramm
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# Abgesichert gegen: fehlende Pakete, defekte Submodule,
-# fehlende Header (DRM, DBus, IBus), fehlende SDL2-Pascal-Bindings
 # ============================================================
 set -e
 
@@ -34,8 +32,6 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
-#    VOLLSTAENDIG fuer SDL2, gl4es, FPC, Ekron Realms
-#    HINWEIS: libdecor-0-dev:arm64 existiert NICHT in Focal
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -105,13 +101,25 @@ cd /opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux
 echo "y" | ./install.sh --no-checks 2>&1 | tail -5
 cd /
 
-ln -sf /usr/local/lib/fpc/${FPC_VERSION}/ppca64 /usr/local/bin/ppca64
-ln -sf /usr/local/bin/fpc /usr/local/bin/fpc-aarch64
+# FPC-Binary-Pfad ermitteln
+FPC_AARCH64_BIN="/usr/local/bin/fpc-aarch64"
+if [ ! -x "$FPC_AARCH64_BIN" ]; then
+  # Fallback: Symlink neu erstellen
+  ln -sf /usr/local/bin/fpc /usr/local/bin/fpc-aarch64
+fi
 
-export FPC_UNIT_PATH="/usr/local/lib/fpc/${FPC_VERSION}/units/aarch64-linux"
+# PATH explizit erweitern
+export PATH="/usr/local/bin:/usr/local/sbin:$PATH"
 
-which fpc && fpc -iV
-which ppca64 && echo "ppca64 OK"
+# Verifikation
+if ! command -v fpc-aarch64 &>/dev/null; then
+  echo "[ERROR] fpc-aarch64 nicht im PATH gefunden!"
+  echo "PATH: $PATH"
+  ls -la /usr/local/bin/fpc* 2>/dev/null || true
+  exit 1
+fi
+echo "==> fpc-aarch64 gefunden: $(command -v fpc-aarch64)"
+fpc-aarch64 -iV
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -133,7 +141,7 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 7. Toolchain-File (mit ALLEN Include-Pfaden)
+# 7. Toolchain-File
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
@@ -151,7 +159,7 @@ EOF
 export TOOLCHAIN=/tmp/aarch64-toolchain.cmake
 
 # ------------------------------------------------------------
-# 8. gl4es (Cross-Compile)
+# 8. gl4es
 # ------------------------------------------------------------
 echo "==> Building gl4es"
 cd "${SRC_DIR}"
@@ -171,7 +179,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 9. SDL2 2.30.2 (Cross-Compile) - MIT ALLEN Include-Pfaden
+# 9. SDL2
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -201,7 +209,7 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_image-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 10. Ekron Realms (FPC Cross-Compile - MAXIMIERT)
+# 10. Ekron Realms (FPC Cross-Compile) - KORRIGIERT
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
@@ -222,16 +230,20 @@ if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   ls -la tools/SDL2-for-Pascal/
   exit 1
 fi
-echo "==> SDL2-for-Pascal Units gefunden:"
-ls tools/SDL2-for-Pascal/units/ | head -20
+echo "==> SDL2-for-Pascal Units gefunden"
 
-MAIN_LPR=$(find . -name "*.lpr" -print -quit)
-if [ -z "${MAIN_LPR}" ]; then
-  echo "[ERROR] Keine .lpr-Datei gefunden!"
+# --- Hauptprogramm EXPLIZIT setzen ---
+# Das Spiel heisst realms.lpr, nicht DebuggerMain.lpr
+MAIN_LPR="Projects/realms.lpr"
+if [ ! -f "${MAIN_LPR}" ]; then
+  echo "[ERROR] ${MAIN_LPR} nicht gefunden!"
+  echo "Verfuegbare .lpr-Dateien:"
+  find . -name "*.lpr"
   exit 1
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
+# --- FPC-Konfiguration ---
 cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
 -Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux
 -Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/rtl
@@ -243,7 +255,8 @@ cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
 -Paarch64
 EOFPC
 
-fpc-aarch64 @/tmp/fpc-aarch64.cfg \
+# --- FPC-Aufruf mit explizitem Pfad ---
+/usr/local/bin/fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
   -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
@@ -257,6 +270,7 @@ fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
+# --- Build-Output kopieren ---
 cp -r * "${PORT_OUT}/" 2>/dev/null || true
 find "${PORT_OUT}" -name "*.o" -delete
 find "${PORT_OUT}" -name "*.ppu" -delete
