@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: FPC-Cross ohne install.sh (Bug-Umgehung)
+# KORRIGIERT: binary.aarch64-linux.tar entpacken
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # ============================================================
 set -e
@@ -86,35 +86,39 @@ for h in /usr/include/libdrm/drm.h \
 done
 
 # ------------------------------------------------------------
-# 4. FPC aarch64 Cross-Compiler (OHNE install.sh)
-#    Das freepascal/fpc-Image hat FPC bereits nativ installiert.
-#    Wir benoetigen nur das ppca64-Backend + aarch64-Units.
+# 4. FPC aarch64 Cross-Compiler (KORRIGIERT)
+#    binary.aarch64-linux.tar entpacken -> ppca64 + Units
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
 FPC_VERSION="3.2.2"
 FPC_AARCH64_URL="https://downloads.freepascal.org/fpc/dist/${FPC_VERSION}/aarch64-linux/fpc-${FPC_VERSION}.aarch64-linux.tar"
 
-wget -q "${FPC_AARCH64_URL}" -O /tmp/fpc-aarch64.tar
+wget -q "${FPC_AARCH64_URL}" -O /tmp/fpc-aarch64-wrapper.tar
 mkdir -p /opt/fpc-aarch64
-tar -xf /tmp/fpc-aarch64.tar -C /opt/fpc-aarch64
+tar -xf /tmp/fpc-aarch64-wrapper.tar -C /opt/fpc-aarch64
 
 FPC_CROSS_DIR="/opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux"
-if [ ! -d "${FPC_CROSS_DIR}" ]; then
-  echo "[ERROR] FPC-Cross-Verzeichnis nicht gefunden: ${FPC_CROSS_DIR}"
-  ls -la /opt/fpc-aarch64/
+
+# WICHTIG: binary.aarch64-linux.tar entpacken
+BINARY_TAR="${FPC_CROSS_DIR}/binary.aarch64-linux.tar"
+if [ ! -f "${BINARY_TAR}" ]; then
+  echo "[ERROR] ${BINARY_TAR} nicht gefunden!"
+  ls -la "${FPC_CROSS_DIR}/"
   exit 1
 fi
 
-echo "==> FPC-Cross-Verzeichnis: ${FPC_CROSS_DIR}"
-echo "==> Verzeichnisstruktur (Top-Level):"
+echo "==> Entpacke binary.aarch64-linux.tar nach ${FPC_CROSS_DIR}/"
+tar -xf "${BINARY_TAR}" -C "${FPC_CROSS_DIR}/"
+
+echo "==> Verzeichnisstruktur nach dem Entpacken:"
 ls -la "${FPC_CROSS_DIR}/"
 
-# ppca64-Backend suchen (mehrere moegliche Pfade)
+# ppca64-Backend suchen
 PPCA64_PATH=""
 for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
          "${FPC_CROSS_DIR}/bin/ppca64" \
-         "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" ; do
+         "${FPC_CROSS_DIR}/ppca64" ; do
   if [ -x "$p" ] && [ -f "$p" ]; then
     PPCA64_PATH="$p"
     break
@@ -122,7 +126,7 @@ for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
 done
 
 if [ -z "${PPCA64_PATH}" ]; then
-  echo "[ERROR] ppca64-Backend nicht gefunden. Suche im gesamten Tarball..."
+  echo "[ERROR] ppca64-Backend nicht gefunden. Suche im gesamten Verzeichnis..."
   find "${FPC_CROSS_DIR}" -name "ppca64" -type f 2>/dev/null
   exit 1
 fi
@@ -139,14 +143,15 @@ for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/units/aarch64-linux" \
 done
 
 if [ -z "${FPC_UNITS_AARCH64}" ]; then
-  echo "[ERROR] aarch64-Units nicht gefunden. Suche im gesamten Tarball..."
+  echo "[ERROR] aarch64-Units nicht gefunden. Suche im gesamten Verzeichnis..."
   find "${FPC_CROSS_DIR}" -type d -name "aarch64-linux" 2>/dev/null
   exit 1
 fi
 echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
 
-# Verlinken fuer einfachen Zugriff
-ln -sf "${PPCA64_PATH}" /usr/local/bin/ppca64
+# ppca64 nach /usr/local/bin kopieren (nicht nur verlinken)
+cp "${PPCA64_PATH}" /usr/local/bin/ppca64
+chmod +x /usr/local/bin/ppca64
 export PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
 
 # Native fpc aus dem Docker-Image verifizieren
@@ -154,6 +159,7 @@ echo "==> Native fpc gefunden: $(command -v fpc)"
 fpc -iV
 
 echo "==> ppca64 verlinkt: $(command -v ppca64)"
+ppca64 -iV 2>/dev/null || true
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -273,12 +279,6 @@ if [ ! -f "${MAIN_LPR}" ]; then
   exit 1
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
-
-# --- Units-Verzeichnisse auflisten (Diagnose) ---
-echo "==> Verfuegbare aarch64-Units:"
-ls "${FPC_UNITS_AARCH64}/" 2>/dev/null || true
-echo "==> Verfuegbare packages:"
-ls "${FPC_UNITS_AARCH64}/packages/" 2>/dev/null || true
 
 # --- FPC-Aufruf mit vollem Cross-Setup ---
 fpc \
