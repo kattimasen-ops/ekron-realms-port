@@ -4,7 +4,7 @@
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
 # Abgesichert gegen: fehlende Pakete, defekte Submodule,
-# fehlende Header, fehlende SDL2-Pascal-Bindings
+# fehlende Header (DRM, DBus, IBus), fehlende SDL2-Pascal-Bindings
 # ============================================================
 set -e
 
@@ -34,8 +34,8 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
+#    VOLLSTAENDIG fuer SDL2, gl4es, FPC, Ekron Realms
 #    HINWEIS: libdecor-0-dev:arm64 existiert NICHT in Focal
-#    und wird nicht benoetigt (SDL_WAYLAND=OFF).
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -44,6 +44,8 @@ apt-get install -y --no-install-recommends \
   libsdl2-dev:arm64 libsdl2-image-dev:arm64 libsdl2-mixer-dev:arm64 \
   libsdl2-ttf-dev:arm64 libsdl2-net-dev:arm64 \
   libdbus-1-dev:arm64 libsystemd-dev:arm64 \
+  libglib2.0-dev:arm64 \
+  libibus-1.0-dev:arm64 \
   libdrm-dev:arm64 libgbm-dev:arm64 libegl1-mesa-dev:arm64 libgles2-mesa-dev:arm64 \
   libgl1-mesa-dev:arm64 libglu1-mesa-dev:arm64 \
   linux-libc-dev:arm64 \
@@ -69,7 +71,7 @@ unset PKG_CONFIG_PATH
 unset PKG_CONFIG_SYSROOT_DIR
 
 echo "==> pkg-config ARM64 check:"
-pkg-config --libs libdrm gbm egl dbus-1 2>&1 || echo "WARN: pkg-config check failed"
+pkg-config --libs libdrm gbm egl dbus-1 ibus-1.0 2>&1 || echo "WARN: pkg-config check failed"
 
 echo "==> Critical header check:"
 for h in /usr/include/libdrm/drm.h \
@@ -77,7 +79,9 @@ for h in /usr/include/libdrm/drm.h \
          /usr/include/dbus-1.0/dbus/dbus.h \
          /usr/lib/aarch64-linux-gnu/dbus-1.0/include/dbus/dbus-arch-deps.h \
          /usr/include/EGL/egl.h \
-         /usr/include/GLES2/gl2.h; do
+         /usr/include/GLES2/gl2.h \
+         /usr/include/ibus-1.0/ibus.h \
+         /usr/include/ibus-1.0/ibusversion.h; do
   if [ -f "$h" ]; then
     echo "  OK: $h"
   else
@@ -129,7 +133,7 @@ export PATH=/opt/cmake/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
 cmake --version
 
 # ------------------------------------------------------------
-# 7. Toolchain-File
+# 7. Toolchain-File (mit ALLEN Include-Pfaden)
 # ------------------------------------------------------------
 cat > /tmp/aarch64-toolchain.cmake <<'EOF'
 set(CMAKE_SYSTEM_NAME Linux)
@@ -167,7 +171,7 @@ cp "${GL4ES_LIB}" "${OUT_LIBS}/libGL.so.1"
 cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 
 # ------------------------------------------------------------
-# 9. SDL2 2.30.2 (Cross-Compile)
+# 9. SDL2 2.30.2 (Cross-Compile) - MIT ALLEN Include-Pfaden
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
@@ -184,7 +188,10 @@ cmake .. \
   -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a35 -mtune=cortex-a35 -fomit-frame-pointer -ffast-math -ftree-vectorize -fno-plt \
 -I/usr/include/libdrm \
 -I/usr/include/dbus-1.0 \
--I/usr/lib/aarch64-linux-gnu/dbus-1.0/include"
+-I/usr/lib/aarch64-linux-gnu/dbus-1.0/include \
+-I/usr/include/ibus-1.0 \
+-I/usr/include/glib-2.0 \
+-I/usr/lib/aarch64-linux-gnu/glib-2.0/include"
 make -j$(nproc)
 make install
 SDL2_LIB=$(find /opt/sdl2-aarch64 -name libSDL2-2.0.so.0 -print -quit)
@@ -210,7 +217,6 @@ mkdir -p tools
 git clone --depth=1 https://github.com/PascalGameDevelopment/SDL2-for-Pascal.git \
   tools/SDL2-for-Pascal
 
-# Pruefen, ob die Units vorhanden sind
 if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   echo "[ERROR] SDL2-for-Pascal Units nicht gefunden!"
   ls -la tools/SDL2-for-Pascal/
@@ -219,7 +225,6 @@ fi
 echo "==> SDL2-for-Pascal Units gefunden:"
 ls tools/SDL2-for-Pascal/units/ | head -20
 
-# --- Hauptprogramm finden ---
 MAIN_LPR=$(find . -name "*.lpr" -print -quit)
 if [ -z "${MAIN_LPR}" ]; then
   echo "[ERROR] Keine .lpr-Datei gefunden!"
@@ -227,7 +232,6 @@ if [ -z "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Konfiguration ---
 cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
 -Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux
 -Fu/usr/local/lib/fpc/3.2.2/units/aarch64-linux/rtl
@@ -239,7 +243,6 @@ cat > /tmp/fpc-aarch64.cfg <<'EOFPC'
 -Paarch64
 EOFPC
 
-# --- FPC-Aufruf mit SDL2-for-Pascal Units ---
 fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
   -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
@@ -254,14 +257,12 @@ fpc-aarch64 @/tmp/fpc-aarch64.cfg \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
-# --- Build-Output kopieren ---
 cp -r * "${PORT_OUT}/" 2>/dev/null || true
 find "${PORT_OUT}" -name "*.o" -delete
 find "${PORT_OUT}" -name "*.ppu" -delete
 find "${PORT_OUT}" -name "*.a" -delete
 find "${PORT_OUT}" -name "*.lpi" -delete
 find "${PORT_OUT}" -name "*.lpr" -delete
-# Git-Verzeichnis des manuell geklonten Repos entfernen
 rm -rf "${PORT_OUT}/tools/SDL2-for-Pascal/.git" 2>/dev/null || true
 
 # ------------------------------------------------------------
