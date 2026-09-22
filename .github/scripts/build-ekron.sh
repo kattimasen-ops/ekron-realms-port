@@ -3,7 +3,7 @@
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# KORRIGIERT: -Fl statt -Fd fuer Library-Suchpfad
+# KORRIGIERT: -CfNEON entfernt (kein gueltiger FPC-Parameter)
 # ============================================================
 set -e
 
@@ -33,7 +33,6 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
-#    HINWEIS: libdecor-0-dev:arm64 existiert NICHT in Focal
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -89,7 +88,6 @@ done
 
 # ------------------------------------------------------------
 # 4. FPC aarch64 Cross-Compiler
-#    ppca64 ist ARM64-Binary -> QEMU-binfmt muss aktiv sein!
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
 
@@ -102,7 +100,6 @@ tar -xf /tmp/fpc-aarch64-wrapper.tar -C /opt/fpc-aarch64
 
 FPC_CROSS_DIR="/opt/fpc-aarch64/fpc-${FPC_VERSION}.aarch64-linux"
 
-# --- Wrapper-Tarball entpacken ---
 BINARY_TAR="${FPC_CROSS_DIR}/binary.aarch64-linux.tar"
 if [ ! -f "${BINARY_TAR}" ]; then
   echo "[ERROR] ${BINARY_TAR} nicht gefunden!"
@@ -111,7 +108,6 @@ if [ ! -f "${BINARY_TAR}" ]; then
 fi
 tar -xf "${BINARY_TAR}" -C "${FPC_CROSS_DIR}/"
 
-# --- base.aarch64-linux.tar.gz entpacken (enthaelt ppca64 + Units) ---
 BASE_TAR="${FPC_CROSS_DIR}/base.aarch64-linux.tar.gz"
 if [ ! -f "${BASE_TAR}" ]; then
   echo "[ERROR] ${BASE_TAR} nicht gefunden!"
@@ -120,7 +116,6 @@ if [ ! -f "${BASE_TAR}" ]; then
 fi
 tar -xzf "${BASE_TAR}" -C "${FPC_CROSS_DIR}/"
 
-# --- ppca64-Backend suchen ---
 PPCA64_PATH=""
 for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/ppca64" \
          "${FPC_CROSS_DIR}/bin/ppca64" \
@@ -138,7 +133,6 @@ if [ -z "${PPCA64_PATH}" ]; then
 fi
 echo "==> ppca64 gefunden: ${PPCA64_PATH}"
 
-# --- aarch64-Units suchen ---
 FPC_UNITS_AARCH64=""
 for p in "${FPC_CROSS_DIR}/lib/fpc/${FPC_VERSION}/units/aarch64-linux" \
          "${FPC_CROSS_DIR}/units/aarch64-linux" ; do
@@ -155,11 +149,9 @@ if [ -z "${FPC_UNITS_AARCH64}" ]; then
 fi
 echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
 
-# --- ppca64 nach /usr/local/bin kopieren UND Wrapper-Skript erstellen ---
 cp "${PPCA64_PATH}" /usr/local/bin/ppca64
 chmod +x /usr/local/bin/ppca64
 
-# Wrapper-Skript: ruft fpc mit den richtigen Flags auf
 cat > /usr/local/bin/fpc-aarch64 <<'WRAPPER_EOF'
 #!/bin/bash
 exec fpc -Paarch64 -Tlinux -XP/usr/local/bin/ppca64 "$@"
@@ -168,7 +160,6 @@ chmod +x /usr/local/bin/fpc-aarch64
 
 export PATH="/usr/local/bin:/usr/local/sbin:${PATH}"
 
-# Verifikation: QEMU-binfmt muss ppca64 ausfuehren koennen
 echo "==> Native fpc gefunden: $(command -v fpc)"
 fpc -iV
 
@@ -272,14 +263,13 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 
 # ------------------------------------------------------------
 # 10. Ekron Realms (FPC Cross-Compile) - KORRIGIERT
-#     -Fl statt -Fd fuer Library-Suchpfad
+#     -CfNEON entfernt (kein gueltiger FPC-Parameter)
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
 git clone --depth=1 https://github.com/ringsce/ekron-realms.git
 cd ekron-realms
 
-# --- Submodul-Fix ---
 echo "==> Fixing broken submodule tools/SDL2-for-Pascal"
 if [ -e "tools/SDL2-for-Pascal" ]; then
   rm -rf "tools/SDL2-for-Pascal"
@@ -294,7 +284,6 @@ if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   exit 1
 fi
 
-# --- Hauptprogramm EXPLIZIT setzen ---
 MAIN_LPR="Projects/realms.lpr"
 if [ ! -f "${MAIN_LPR}" ]; then
   echo "[ERROR] ${MAIN_LPR} nicht gefunden!"
@@ -303,7 +292,6 @@ if [ ! -f "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Aufruf mit Wrapper-Skript ---
 fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}" \
   -Fu"${FPC_UNITS_AARCH64}/rtl" \
@@ -326,14 +314,13 @@ fpc-aarch64 \
   -Mdelphi -Scgi \
   -O4 \
   -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
-  -CpARMV8 -CfNEON \
+  -CpARMV8 \
   -XX -CX -Xs \
   -OW \
   -k--gc-sections -k-O1 -k--as-needed \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
-# --- Build-Output kopieren ---
 cp -r * "${PORT_OUT}/" 2>/dev/null || true
 find "${PORT_OUT}" -name "*.o" -delete
 find "${PORT_OUT}" -name "*.ppu" -delete
