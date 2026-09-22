@@ -1,8 +1,9 @@
 #!/bin/bash
 # ============================================================
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
-# KORRIGIERT: QEMU-basierte Ausfuehrung von ppca64
+# MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
+# KORRIGIERT: -Fl statt -Fd fuer Library-Suchpfad
 # ============================================================
 set -e
 
@@ -32,6 +33,7 @@ apt-get update
 
 # ------------------------------------------------------------
 # 2. Cross-Toolchain + ARM64-Bibliotheken
+#    HINWEIS: libdecor-0-dev:arm64 existiert NICHT in Focal
 # ------------------------------------------------------------
 echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
@@ -86,7 +88,7 @@ for h in /usr/include/libdrm/drm.h \
 done
 
 # ------------------------------------------------------------
-# 4. FPC aarch64 Cross-Compiler (KORRIGIERT)
+# 4. FPC aarch64 Cross-Compiler
 #    ppca64 ist ARM64-Binary -> QEMU-binfmt muss aktiv sein!
 # ------------------------------------------------------------
 echo "==> Setting up FPC aarch64 cross-compiler"
@@ -270,6 +272,7 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 
 # ------------------------------------------------------------
 # 10. Ekron Realms (FPC Cross-Compile) - KORRIGIERT
+#     -Fl statt -Fd fuer Library-Suchpfad
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
@@ -320,7 +323,6 @@ fpc-aarch64 \
   -FuProjects/units -Fuengine -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Fl/usr/lib/aarch64-linux-gnu \
-  -Fd/usr/lib/aarch64-linux-gnu \
   -Mdelphi -Scgi \
   -O4 \
   -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
