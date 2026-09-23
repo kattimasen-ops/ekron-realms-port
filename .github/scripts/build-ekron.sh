@@ -3,7 +3,13 @@
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# KORRIGIERT: Binutils-Prefix, Assembler-Pfad, Submodul-Fehler
+# KORRIGIERT:
+#   - Binutils-Prefix statt falschem ppca64-Pfad (Assembler-Fehler)
+#   - sys_linux.pas Windows/Linux-Erkennung + Ersetzung
+#   - -Fu Reihenfolge: sys/linux vor engine/linux
+#   - Komplettes Spiel wird ins Artefakt übernommen
+#   - Submodul-Fehler behoben
+#   - gl4es LIBGL_NODOWNSAMPLING (statt NODOWNSAMPLE)
 # ============================================================
 set -e
 
@@ -62,6 +68,8 @@ which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
 which aarch64-linux-gnu-as
 aarch64-linux-gnu-as --version | head -1
+which aarch64-linux-gnu-ld
+aarch64-linux-gnu-ld --version | head -1
 
 # ------------------------------------------------------------
 # 3. pkg-config fuer ARM64 konfigurieren
@@ -229,6 +237,7 @@ export TOOLCHAIN=/tmp/aarch64-toolchain.cmake
 # ------------------------------------------------------------
 echo "==> Building gl4es"
 cd "${SRC_DIR}"
+rm -rf gl4es
 git clone --depth=1 https://github.com/ptitSeb/gl4es.git
 cd gl4es
 mkdir -p build && cd build
@@ -249,6 +258,7 @@ cp "${EGL_LIB}"   "${OUT_LIBS}/libEGL.so.1"
 # ------------------------------------------------------------
 echo "==> Building SDL2"
 cd "${SRC_DIR}"
+rm -rf SDL
 git clone --depth=1 -b release-2.30.2 https://github.com/libsdl-org/SDL.git
 cd SDL
 mkdir -p build && cd build
@@ -280,16 +290,14 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
 
-# KORRIGIERT: Submodul-Verzeichnis vor dem Checkout entfernen
 rm -rf ekron-realms
 git clone --depth=1 https://github.com/ringsce/ekron-realms.git
 cd ekron-realms
 
-# KORRIGIERT: Leeres Submodul-Verzeichnis entfernen und .gitmodules bereinigen
+# KORRIGIERT: Submodul-Verzeichnis vor dem Checkout entfernen
 if [ -e "tools/SDL2-for-Pascal" ]; then
   rm -rf "tools/SDL2-for-Pascal"
 fi
-# .gitmodules-Eintrag entfernen, falls vorhanden
 if [ -f ".gitmodules" ]; then
   git config --file .gitmodules --remove-section 'submodule.tools/SDL2-for-Pascal' 2>/dev/null || true
   git rm --cached tools/SDL2-for-Pascal 2>/dev/null || true
@@ -305,7 +313,38 @@ if [ ! -f "tools/SDL2-for-Pascal/units/sdl2.pas" ]; then
   exit 1
 fi
 
-# --- Diagnose: Verzeichnisstruktur ausgeben ---
+# --- 10a. KORREKTE sys_linux.pas auswählen ---
+echo "==> Prüfe sys_linux.pas auf Windows-API-Abhängigkeiten"
+
+SYS_LINUX_GOOD=""
+SYS_LINUX_BAD=""
+for f in ./engine/linux/sys_linux.pas \
+         ./engine/sys/linux/sys_linux.pas \
+         ./sys/linux/sys_linux.pas; do
+  if [ -f "$f" ]; then
+    if grep -q "GetLastError\|MessageBox\|GetDriveType\|timeBeginPeriod\|AllocConsole" "$f" 2>/dev/null; then
+      echo "  [WINDOWS-VERSION] $f"
+      SYS_LINUX_BAD="$SYS_LINUX_BAD $f"
+    else
+      echo "  [LINUX-VERSION]   $f"
+      SYS_LINUX_GOOD="$f"
+    fi
+  fi
+done
+
+if [ -z "$SYS_LINUX_GOOD" ]; then
+  echo "[ERROR] Keine Linux-Version von sys_linux.pas gefunden!"
+  exit 1
+fi
+
+echo "==> Verwende Linux-Version: $SYS_LINUX_GOOD"
+
+for bad in $SYS_LINUX_BAD; do
+  cp "$SYS_LINUX_GOOD" "$bad"
+  echo "  Ersetzt: $bad"
+done
+
+# --- Diagnose: Projektestruktur ausgeben ---
 echo "==> Diagnose: Projektestruktur"
 echo "--- Top-Level ---"
 ls -la
@@ -330,7 +369,7 @@ echo "==> Hauptprogramm: ${MAIN_LPR}"
 GCC_LIB_PATH=$(aarch64-linux-gnu-gcc -print-file-name=libgcc.a | xargs dirname)
 echo "==> Libgcc-Pfad: ${GCC_LIB_PATH}"
 
-# --- FPC-Aufruf mit korrekten Flags ---
+# --- FPC-Aufruf mit korrekten Flags und Reihenfolge ---
 export BINUTILSPREFIX="aarch64-linux-gnu-"
 
 fpc-aarch64 \
@@ -350,12 +389,12 @@ fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}/packages/rtl-unicode" \
   -Fu"$(pwd)/tools/SDL2-for-Pascal/units" \
   -FuProjects/units \
+  -Fusys \
+  -Fusys/linux \
   -Fuengine \
   -Fuengine/linux \
   -Fuengine/sys \
   -Fuengine/sys/linux \
-  -Fusys \
-  -Fusys/linux \
   -Fugame -Fuqcommon -Fuserver \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Fu"$(pwd)" \
@@ -372,14 +411,56 @@ fpc-aarch64 \
   "${MAIN_LPR}"
 
 # ------------------------------------------------------------
-# 11. Nur benötigte Dateien kopieren
+# 11. KOMPLETTES Spiel aus Source ins Artefakt kopieren
 # ------------------------------------------------------------
-echo "==> Kopiere benötigte Dateien nach ${PORT_OUT}"
+echo "==> Kopiere komplettes Spiel aus Source nach ${PORT_OUT}"
+
+cd "${SRC_DIR}/ekron-realms"
+
+shopt -s dotglob
+cp -an . "${PORT_OUT}/" 2>/dev/null || cp -a . "${PORT_OUT}/"
+shopt -u dotglob
+
+# --- Aufräumen: nur Entwicklungs-/Build-Dateien entfernen ---
+cd "${PORT_OUT}"
+
+find . -type f \( \
+  -name "*.pas"    -o -name "*.pp"       -o -name "*.inc"  -o \
+  -name "*.ppu"    -o -name "*.o"        -o -name "*.a"    -o \
+  -name "*.lpr"    -o -name "*.lpi"      -o -name "*.lpk"  -o \
+  -name "*.lps"    -o -name "*.compiled" -o -name "*.or"   -o \
+  -name "*.res"    -o -name "*.dbg" \
+\) -delete 2>/dev/null || true
+
+rm -rf .git .github .gitignore .gitmodules .gitattributes .gitlab-ci.yml 2>/dev/null || true
+rm -rf tools/SDL2-for-Pascal
+
+if [ -d tools ] && [ -z "$(ls -A tools 2>/dev/null)" ]; then
+  rmdir tools 2>/dev/null || true
+fi
+
+find . -type d -empty -delete 2>/dev/null || true
+
+echo ""
+echo "==> Artifact-Inhalt (Top-Level):"
+ls -la "${PORT_OUT}/"
+echo ""
+echo "==> Artifact-Gesamtgröße:"
+du -sh "${PORT_OUT}/" 2>/dev/null || true
+
+if ! find "${PORT_OUT}" \( -iname "*.pak" -o -iname "*.pk3" -o -iname "*.bsp" -o -type d -iname "baseq2" \) -print -quit 2>/dev/null | grep -q .; then
+  echo ""
+  echo "[WARN] Keine Quake-2-Spieldaten (.pak/.pk3/.bsp/baseq2/) im Artefakt gefunden!"
+  echo "[WARN] Der Nutzer muss die Spieldaten nach dem Entpacken selbst hinzufügen,"
+  echo "[WARN] z.B. aus der kostenlosen Quake-II-Demo oder einer legalen Vollversion."
+fi
+
+# ------------------------------------------------------------
+# 11b. Bibliotheken kopieren
+# ------------------------------------------------------------
+echo "==> Kopiere ARM64-Bibliotheken"
 mkdir -p "${PORT_OUT}/libs.aarch64"
 cp "${OUT_LIBS}"/*.so* "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
-
-# Kopiere nur die relevanten Projektdateien
-find . -maxdepth 1 -type f \( -name "*.cfg" -o -name "*.json" -o -name "*.xml" -o -name "*.sh" \) -exec cp {} "${PORT_OUT}/" \;
 
 # ------------------------------------------------------------
 # 12. PortMaster-Dateien generieren
@@ -501,110 +582,4 @@ cat > "${PORT_OUT}/gameinfo.xml" <<'GAMEINFO'
   <game>
     <path>./Ekron Realms FPS.sh</path>
     <name>Ekron Realms FPS</name>
-    <desc>Open-Source Ego-Shooter (Quake-2-Engine, Object Pascal). Maximale ARM64-Performance mit NEON, gl4es und Smart Linking.</desc>
-    <releasedate>20240101T000000</releasedate>
-    <developer>RingsCE</developer>
-    <publisher>RingsCE</publisher>
-    <genre>FPS</genre>
-    <players>1</players>
-  </game>
-</gameList>
-GAMEINFO
-
-cat > "${PORT_OUT}/config.cfg" <<'CONFIGCFG'
-# Ekron Realms FPS - Konfiguration fuer RK3326 / ArkOS
-[Video]
-Width=640
-Height=480
-Fullscreen=1
-VSync=0
-FPSLimit=30
-Renderer=OpenGL
-GLESVersion=2
-TextureQuality=High
-ShadowQuality=Low
-ParticleEffects=High
-AntiAliasing=0
-AnisotropicFiltering=2
-Bloom=On
-MotionBlur=Off
-DepthOfField=Off
-ViewDistance=80
-FOV=75
-
-[Audio]
-Enabled=1
-Volume=80
-MusicVolume=60
-
-[Controls]
-GamepadEnabled=1
-Deadzone=0.15
-Sensitivity=1.5
-MoveForward=DPAD_UP
-MoveBackward=DPAD_DOWN
-StrafeLeft=DPAD_LEFT
-StrafeRight=DPAD_RIGHT
-Fire=BUTTON_A
-Jump=BUTTON_B
-Crouch=BUTTON_X
-Use=BUTTON_Y
-Reload=BUTTON_L1
-WeaponNext=BUTTON_R1
-WeaponPrev=BUTTON_L2
-Menu=BUTTON_START
-
-[Performance]
-ThreadedRendering=1
-Multithreaded=1
-CacheSize=64
-PreloadAssets=1
-CONFIGCFG
-
-cat > "${PORT_OUT}/gl4es.cfg" <<'GL4ESCFG'
-# gl4es configuration for RK3326 (Mali-G31 MP2)
-LIBGL_FB=1
-LIBGL_ES=2
-LIBGL_GL=21
-LIBGL_SHRINK=4
-LIBGL_MIPMAP=1
-LIBGL_RECYCLEFBO=1
-LIBGL_VSYNC=0
-LIBGL_NOBANNER=1
-LIBGL_NOTEST=1
-LIBGL_NODOWNSAMPLING=1
-LIBGL_XREFRESH=1
-LIBGL_STREAM=0
-GL4ESCFG
-
-cat > "${PORT_OUT}/sdl2.cfg" <<'SDL2CFG'
-# SDL2 configuration for RK3326
-SDL_VIDEODRIVER=kmsdrm
-SDL_AUDIODRIVER=alsa
-SDL_HINT_RENDER_DRIVER=opengles2
-SDL_HINT_RENDER_OPENGL_SHADERS=1
-SDL_HINT_RENDER_VSYNC=0
-SDL_HINT_KMSDRM_REQUIRE_DRM_MASTER=1
-SDL_HINT_VIDEO_DOUBLE_BUFFER=1
-SDL2CFG
-
-# ------------------------------------------------------------
-# 13. Finale Ausgabe + Verifikation
-# ------------------------------------------------------------
-echo "=== Final PortMaster output ==="
-ls -la "${PORT_OUT}/"
-echo ""
-echo "=== libs.aarch64 ==="
-ls -la "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
-
-if [ -f "${PORT_OUT}/ekron" ]; then
-  echo ""
-  echo "=== Binary verification ==="
-  file "${PORT_OUT}/ekron"
-  aarch64-linux-gnu-readelf -h "${PORT_OUT}/ekron" | head -20 || true
-  echo ""
-  echo "=== glibc version check (should be <= 2.31) ==="
-  aarch64-linux-gnu-objdump -T "${PORT_OUT}/ekron" | grep -E "GLIBC_2\.[0-9]+" | sed 's/.*GLIBC_/GLIBC_/' | sort -u || true
-fi
-
-echo "==> Cross-Compile + PortMaster-Paketierung erfolgreich."
+    <desc>Open-Source Ego-Shooter (Quake-2
