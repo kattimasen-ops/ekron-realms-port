@@ -3,7 +3,7 @@
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# KORRIGIERT: sys_linux Unit-Pfade, gl4es-Parameter, FPC-Flags
+# KORRIGIERT: Binutils-Prefix, Assembler-Pfad, Submodul-Fehler
 # ============================================================
 set -e
 
@@ -38,6 +38,7 @@ echo "==> Installing cross-toolchain and ARM64 libs"
 apt-get install -y --no-install-recommends \
   build-essential git pkg-config pkg-config-aarch64-linux-gnu ca-certificates wget file zip python3 ccache \
   crossbuild-essential-arm64 \
+  binutils-aarch64-linux-gnu \
   libsdl2-dev:arm64 libsdl2-image-dev:arm64 libsdl2-mixer-dev:arm64 \
   libsdl2-ttf-dev:arm64 libsdl2-net-dev:arm64 \
   libdbus-1-dev:arm64 libsystemd-dev:arm64 \
@@ -59,6 +60,8 @@ apt-get install -y --no-install-recommends \
 
 which aarch64-linux-gnu-gcc
 aarch64-linux-gnu-gcc --version | head -1
+which aarch64-linux-gnu-as
+aarch64-linux-gnu-as --version | head -1
 
 # ------------------------------------------------------------
 # 3. pkg-config fuer ARM64 konfigurieren
@@ -152,9 +155,17 @@ echo "==> aarch64-Units: ${FPC_UNITS_AARCH64}"
 cp "${PPCA64_PATH}" /usr/local/bin/ppca64
 chmod +x /usr/local/bin/ppca64
 
+# KORRIGIERT: Binutils-Prefix statt falschem ppca64-Pfad
+export BINUTILSPREFIX="aarch64-linux-gnu-"
+export CROSSBINDIR="/usr/bin"
+
 cat > /usr/local/bin/fpc-aarch64 <<'WRAPPER_EOF'
 #!/bin/bash
-exec fpc -Paarch64 -Tlinux -XP/usr/local/bin/ppca64 "$@"
+export BINUTILSPREFIX="aarch64-linux-gnu-"
+exec fpc -Paarch64 -Tlinux \
+  -XPaarch64-linux-gnu- \
+  -XRaarch64-linux-gnu- \
+  "$@"
 WRAPPER_EOF
 chmod +x /usr/local/bin/fpc-aarch64
 
@@ -173,6 +184,8 @@ if command -v ppca64 &>/dev/null; then
 fi
 
 echo "==> fpc-aarch64 Wrapper: $(command -v fpc-aarch64)"
+echo "==> Assembler: $(command -v aarch64-linux-gnu-as)"
+echo "==> Linker: $(command -v aarch64-linux-gnu-ld)"
 
 # ------------------------------------------------------------
 # 5. Verzeichnisse
@@ -266,13 +279,22 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
+
+# KORRIGIERT: Submodul-Verzeichnis vor dem Checkout entfernen
+rm -rf ekron-realms
 git clone --depth=1 https://github.com/ringsce/ekron-realms.git
 cd ekron-realms
 
-echo "==> Fixing broken submodule tools/SDL2-for-Pascal"
+# KORRIGIERT: Leeres Submodul-Verzeichnis entfernen und .gitmodules bereinigen
 if [ -e "tools/SDL2-for-Pascal" ]; then
   rm -rf "tools/SDL2-for-Pascal"
 fi
+# .gitmodules-Eintrag entfernen, falls vorhanden
+if [ -f ".gitmodules" ]; then
+  git config --file .gitmodules --remove-section 'submodule.tools/SDL2-for-Pascal' 2>/dev/null || true
+  git rm --cached tools/SDL2-for-Pascal 2>/dev/null || true
+fi
+
 mkdir -p tools
 git clone --depth=1 https://github.com/PascalGameDevelopment/SDL2-for-Pascal.git \
   tools/SDL2-for-Pascal
@@ -287,8 +309,6 @@ fi
 echo "==> Diagnose: Projektestruktur"
 echo "--- Top-Level ---"
 ls -la
-echo "--- engine/ ---"
-ls -la engine/ 2>/dev/null || true
 echo "--- engine/linux/ ---"
 ls -la engine/linux/ 2>/dev/null || true
 echo "--- engine/sys/linux/ ---"
@@ -311,6 +331,8 @@ GCC_LIB_PATH=$(aarch64-linux-gnu-gcc -print-file-name=libgcc.a | xargs dirname)
 echo "==> Libgcc-Pfad: ${GCC_LIB_PATH}"
 
 # --- FPC-Aufruf mit korrekten Flags ---
+export BINUTILSPREFIX="aarch64-linux-gnu-"
+
 fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}" \
   -Fu"${FPC_UNITS_AARCH64}/rtl" \
@@ -356,10 +378,8 @@ echo "==> Kopiere benötigte Dateien nach ${PORT_OUT}"
 mkdir -p "${PORT_OUT}/libs.aarch64"
 cp "${OUT_LIBS}"/*.so* "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
 
-# Kopiere nur die relevanten Projektdateien (keine Build-Artefakte)
+# Kopiere nur die relevanten Projektdateien
 find . -maxdepth 1 -type f \( -name "*.cfg" -o -name "*.json" -o -name "*.xml" -o -name "*.sh" \) -exec cp {} "${PORT_OUT}/" \;
-# Falls das Spiel zusätzliche Ressourcen benötigt, hier gezielt kopieren:
-# cp -r Resources "${PORT_OUT}/" 2>/dev/null || true
 
 # ------------------------------------------------------------
 # 12. PortMaster-Dateien generieren
