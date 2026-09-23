@@ -3,8 +3,7 @@
 # Ekron Realms FPS - Cross-Compile fuer ARM64 / RK3326
 # MAXIMALE Performance-Version
 # GLIBC 2.31 (ArkOS / R36S / M9 Pro)
-# KORRIGIERT: sys_linux Unit-Pfade auf echte Repo-Struktur
-#   (engine/linux, engine/sys/linux, sys/linux)
+# KORRIGIERT: sys_linux Unit-Pfade, gl4es-Parameter, FPC-Flags
 # ============================================================
 set -e
 
@@ -263,12 +262,7 @@ cp /usr/lib/aarch64-linux-gnu/libSDL2_image-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null 
 cp /usr/lib/aarch64-linux-gnu/libSDL2_mixer-2.0.so.0 "${OUT_LIBS}/" 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 10. Ekron Realms (FPC Cross-Compile) - KORRIGIERT
-#     sys_linux.pas liegt auf Repo-Root-Ebene in:
-#       ./engine/linux/sys_linux.pas
-#       ./engine/sys/linux/sys_linux.pas
-#       ./sys/linux/sys_linux.pas
-#     Daher diese Pfade explizit in -Fu aufnehmen.
+# 10. Ekron Realms (FPC Cross-Compile)
 # ------------------------------------------------------------
 echo "==> Building Ekron Realms FPS (maximized)"
 cd "${SRC_DIR}"
@@ -312,10 +306,11 @@ if [ ! -f "${MAIN_LPR}" ]; then
 fi
 echo "==> Hauptprogramm: ${MAIN_LPR}"
 
-# --- FPC-Aufruf mit Wrapper-Skript und KORREKTEN Unit-Pfaden ---
-# WICHTIG: Die sys_linux-Unit liegt auf Repo-Root-Ebene, nicht unter Projects/.
-#          Daher muessen engine/linux, engine/sys/linux und sys/linux
-#          explizit im -Fu-Pfad stehen.
+# --- Libgcc-Pfad ermitteln ---
+GCC_LIB_PATH=$(aarch64-linux-gnu-gcc -print-file-name=libgcc.a | xargs dirname)
+echo "==> Libgcc-Pfad: ${GCC_LIB_PATH}"
+
+# --- FPC-Aufruf mit korrekten Flags ---
 fpc-aarch64 \
   -Fu"${FPC_UNITS_AARCH64}" \
   -Fu"${FPC_UNITS_AARCH64}/rtl" \
@@ -343,9 +338,10 @@ fpc-aarch64 \
   -Furef_gl -Furef_soft -Fuctf -Fuui -Fuclient \
   -Fu"$(pwd)" \
   -Fl/usr/lib/aarch64-linux-gnu \
+  -Fl"${GCC_LIB_PATH}" \
   -Mdelphi -Scgi \
   -O4 \
-  -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE,FORCENOSTACKFRAME \
+  -OoREGVAR,UNCERTAIN,STACKFRAME,PEEPHOLE,LOOPUNROLL,TAILREC,CSE,DFA,STRENGTH,FASTMATH,REMOVEEMPTYPROCS,ORDERFIELDS,CONSTPROP,DEADSTORE \
   -CpARMV8 \
   -XX -CX -Xs \
   -OW \
@@ -353,23 +349,21 @@ fpc-aarch64 \
   -o"${PORT_OUT}/ekron" \
   "${MAIN_LPR}"
 
-cp -r * "${PORT_OUT}/" 2>/dev/null || true
-find "${PORT_OUT}" -name "*.o" -delete
-find "${PORT_OUT}" -name "*.ppu" -delete
-find "${PORT_OUT}" -name "*.a" -delete
-find "${PORT_OUT}" -name "*.lpi" -delete
-find "${PORT_OUT}" -name "*.lpr" -delete
-rm -rf "${PORT_OUT}/tools/SDL2-for-Pascal/.git" 2>/dev/null || true
-
 # ------------------------------------------------------------
-# 11. Bibliotheken kopieren
+# 11. Nur benötigte Dateien kopieren
 # ------------------------------------------------------------
+echo "==> Kopiere benötigte Dateien nach ${PORT_OUT}"
 mkdir -p "${PORT_OUT}/libs.aarch64"
 cp "${OUT_LIBS}"/*.so* "${PORT_OUT}/libs.aarch64/" 2>/dev/null || true
 
-# ============================================================
-# 12. PORTMASTER-DATEIEN GENERIEREN
-# ============================================================
+# Kopiere nur die relevanten Projektdateien (keine Build-Artefakte)
+find . -maxdepth 1 -type f \( -name "*.cfg" -o -name "*.json" -o -name "*.xml" -o -name "*.sh" \) -exec cp {} "${PORT_OUT}/" \;
+# Falls das Spiel zusätzliche Ressourcen benötigt, hier gezielt kopieren:
+# cp -r Resources "${PORT_OUT}/" 2>/dev/null || true
+
+# ------------------------------------------------------------
+# 12. PortMaster-Dateien generieren
+# ------------------------------------------------------------
 echo "==> Generating PortMaster files"
 
 cat > "${PORT_OUT}/Ekron Realms FPS.sh" <<'STARTSCRIPT'
@@ -409,7 +403,7 @@ export LIBGL_RECYCLEFBO=1
 export LIBGL_VSYNC=0
 export LIBGL_NOBANNER=1
 export LIBGL_NOTEST=1
-export LIBGL_NODOWNSAMPLE=1
+export LIBGL_NODOWNSAMPLING=1
 export LIBGL_XREFRESH=1
 export LIBGL_STREAM=0
 
@@ -558,7 +552,7 @@ LIBGL_RECYCLEFBO=1
 LIBGL_VSYNC=0
 LIBGL_NOBANNER=1
 LIBGL_NOTEST=1
-LIBGL_NODOWNSAMPLE=1
+LIBGL_NODOWNSAMPLING=1
 LIBGL_XREFRESH=1
 LIBGL_STREAM=0
 GL4ESCFG
@@ -588,6 +582,9 @@ if [ -f "${PORT_OUT}/ekron" ]; then
   echo "=== Binary verification ==="
   file "${PORT_OUT}/ekron"
   aarch64-linux-gnu-readelf -h "${PORT_OUT}/ekron" | head -20 || true
+  echo ""
+  echo "=== glibc version check (should be <= 2.31) ==="
+  aarch64-linux-gnu-objdump -T "${PORT_OUT}/ekron" | grep -E "GLIBC_2\.[0-9]+" | sed 's/.*GLIBC_/GLIBC_/' | sort -u || true
 fi
 
 echo "==> Cross-Compile + PortMaster-Paketierung erfolgreich."
